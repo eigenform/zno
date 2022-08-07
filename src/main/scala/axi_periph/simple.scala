@@ -45,7 +45,7 @@ class AXIRegisterDevice extends Module {
 
   // Register for the read data response channel data. 
   val resp_reg  = RegInit({
-    val rdata   = Wire(new AXIReadDataChannel(4, 32))
+    val rdata   = Wire(new AXIReadDataChannel(32))
     rdata.data := 0.U
     rdata.resp := AXIRespType.OKAY
     rdata.id   := 0.U
