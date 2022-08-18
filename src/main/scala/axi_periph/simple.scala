@@ -5,19 +5,206 @@ import chisel3.util._
 import chisel3.experimental.ChiselEnum
 
 import zno.amba.axi._
+import zno.bus._
+
+// This is the state machine associated with an [[AXISourceCtrl]] device.
+object AXICtrlState extends ChiselEnum {
+    val IDLE, READ_ADDR, READ_DATA, WRITE_ADDR, WRITE_DATA, WRITE_RESP = Value
+}
+
+// Device for translating transactions from a [[SimpleBusSource]] into
+// transactions on an [[AXISourcePort]].
+//
+// NOTE: We're assuming for now that the underlying transactions will always 
+// be a single transfer of 4 bytes. 
+//
+// TODO: You probably want some kind of counter to enforce some kind of hard
+// limit on the number of cycles we can spend waiting for the AXI bus?
+//
+class AXISourceCtrl extends Module {
+  val dbg_state = IO(Output(AXICtrlState()))
+
+  // Outbound requests to an external AXI port
+  val axi = IO(new AXISourcePort(32, 32))
+  // Inbound requests from somewhere else in the design
+  val bus = IO(new SimpleBusSink)
+
+  // State machine registers
+  val state       = RegInit(AXICtrlState.IDLE)
+  dbg_state      := state
+  val reg_req     = Reg(new SimpleBusReq)
+
+  // AXI write address default assignments
+  axi.waddr.valid      := false.B
+  axi.waddr.bits.addr  := 0.U
+  axi.waddr.bits.size  := 0.U
+  axi.waddr.bits.len   := 0.U
+  axi.waddr.bits.burst := AXIBurstType.FIXED
+  axi.waddr.bits.id    := "b100001".U
+  axi.waddr.bits.lock  := 0.U
+  axi.waddr.bits.cache := 0.U
+  axi.waddr.bits.prot  := 0.U
+  axi.waddr.bits.qos   := 0.U
+
+  // AXI write data default assignments
+  axi.wdata.valid     := false.B
+  axi.wdata.bits.last := true.B
+  axi.wdata.bits.data := 0.U
+  axi.wdata.bits.strb := 0.U
+
+  // AXI read address default assignments
+  axi.raddr.valid      := false.B
+  axi.raddr.bits.addr  := 0.U
+  axi.raddr.bits.size  := 0.U
+  axi.raddr.bits.len   := 0.U
+  axi.raddr.bits.burst := AXIBurstType.FIXED
+  axi.raddr.bits.id    := "b100001".U
+  axi.raddr.bits.lock  := 0.U
+  axi.raddr.bits.cache := 0.U
+  axi.raddr.bits.prot  := 0.U
+  axi.raddr.bits.qos   := 0.U
+
+  // AXI read data / AXI write response default assignments
+  axi.rdata.ready    := false.B
+  axi.wresp.ready    := false.B
+
+  // SimpleBus default assignments
+  bus.req.ready      := false.B
+  bus.resp.valid     := false.B
+  bus.resp.bits.data := 0.U
+  bus.resp.bits.err  := SimpleBusErr.OKAY
+
+  switch (state) {
+
+    // Register a request from the bus and move to the next state.
+    // The IDLE state *must* indicate that there are no pending transactions.
+    is (AXICtrlState.IDLE) {
+      bus.req.ready := true.B
+      when (bus.req.fire) {
+        reg_req := bus.req.bits
+        state := Mux(bus.req.bits.wen, 
+          AXICtrlState.WRITE_ADDR, 
+          AXICtrlState.READ_ADDR
+        )
+      }
+    }
+
+    // Start an AXI read transaction.
+    is (AXICtrlState.READ_ADDR) {
+      axi.raddr.valid := true.B
+      when (axi.raddr.fire) {
+        axi.raddr.bits.addr := reg_req.addr
+        axi.raddr.bits.size := 4.U
+        axi.raddr.bits.len  := 1.U
+        state := AXICtrlState.READ_DATA
+      }
+    }
+
+    // Complete an AXI read transaction.
+    //
+    // NOTE: We're masking the contents of RDATA based on the requested width.
+    // NOTE: We're only *assuming* RLAST is always asserted here. 
+    //
+    is (AXICtrlState.READ_DATA) {
+      axi.rdata.ready := true.B
+      when (axi.rdata.fire) {
+        val bdata = bus.resp.bits.data
+        val adata = axi.rdata.bits.data
+        bus.resp.valid    := true.B
+        bus.resp.bits.err := Mux( (axi.rdata.bits.resp =/= AXIRespType.OKAY), 
+          SimpleBusErr.AXI,
+          SimpleBusErr.OKAY
+        )
+        switch (reg_req.wid) {
+          is (SimpleBusWidth.BYTE) { bdata := adata & 0xff.U }
+          is (SimpleBusWidth.HALF) { bdata := adata & 0xffff.U }
+          is (SimpleBusWidth.WORD) { bdata := adata }
+        }
+        reg_req := 0.U.asTypeOf(new SimpleBusReq)
+        state   := AXICtrlState.IDLE
+      }
+    }
+
+    // Start an AXI write transaction.
+    //
+    // NOTE: Ordering between write address and write data is not defined
+    // in the AXI protocol. For now, let's specify that they should be
+    // separated by a single cycle; maybe later we can think about presenting 
+    // them in the same cycle?
+    //
+    is (AXICtrlState.WRITE_ADDR) {
+      axi.waddr.valid := true.B
+      when (axi.waddr.fire) {
+        axi.waddr.bits.addr := reg_req.addr
+        axi.waddr.bits.size := 4.U
+        axi.waddr.bits.len  := 1.U
+        state := AXICtrlState.WRITE_DATA
+      }
+    }
+
+    // Drive the data associated with this write transaction.
+    //
+    // NOTE: We're masking the output on WDATA based on the requested width.
+    // NOTE: WLAST should always be asserted.
+    //
+    is (AXICtrlState.WRITE_DATA) {
+      axi.wdata.valid := true.B
+      when (axi.wdata.fire) {
+        axi.wdata.bits.last := true.B
+        switch (reg_req.wid) {
+          is (SimpleBusWidth.BYTE) { 
+            axi.wdata.bits.data := reg_req.data & 0xff.U
+            axi.wdata.bits.strb := "b0001".U 
+          }
+          is (SimpleBusWidth.HALF) { 
+            axi.wdata.bits.data := reg_req.data & 0xffff.U
+            axi.wdata.bits.strb := "b0011".U 
+          }
+          is (SimpleBusWidth.WORD) { 
+            axi.wdata.bits.data := reg_req.data
+            axi.wdata.bits.strb := "b1111".U
+          }
+        }
+        state := AXICtrlState.WRITE_RESP
+      }
+    }
+
+    // Complete an AXI write transaction.
+    is (AXICtrlState.WRITE_RESP) {
+      axi.wresp.ready := true.B
+      when (axi.wresp.fire) {
+        bus.resp.valid     := true.B
+        bus.resp.bits.data := 0.U
+        bus.resp.bits.err  := Mux( (axi.rdata.bits.resp =/= AXIRespType.OKAY), 
+          SimpleBusErr.AXI,
+          SimpleBusErr.OKAY
+        )
+        reg_req := 0.U.asTypeOf(new SimpleBusReq)
+        state   := AXICtrlState.IDLE
+      }
+    }
+
+  }
+}
+
+
+
+class SimpleSourceDeviceTop extends Module {
+  val axi0_port_src = IO(new AXIExternalPort(32, 32))
+    .suggestName("M_AXI0")
+  val axi0_ctrl = Module(new AXISourceCtrl)
+  axi0_port_src.connect_axi_source(axi0_ctrl.axi)
+}
+
 
 class SimpleDeviceTop extends Module {
-
   // Port for accepting transactions on the Zynq PS7 AXI bus
   val axi0_port_sink = IO(Flipped(new AXIExternalPort(32, 32)))
     .suggestName("S_AXI0")
-
   // Connect our logic to the AXI port
   val my_dev = Module(new AXIRegisterDevice)
   axi0_port_sink.connect_axi_sink(my_dev.io.axi);
-
 }
-
 
 // This is just a simple read-only memory addressible on the AXI bus. 
 class AXIRegisterDevice extends Module {
@@ -117,5 +304,7 @@ class AXIRegisterDevice extends Module {
   io.axi.wresp              := DontCare
 
 }
+
+
 
 

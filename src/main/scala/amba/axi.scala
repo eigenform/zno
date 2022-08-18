@@ -71,6 +71,8 @@ class AXISinkPort(addr_width: Int, data_width: Int) extends Bundle {
 // I'm kind of relying on Vivado (grahhgrg) to integrate a design right now.
 // It's nice to define a bundle that Vivado will automatically recognize as 
 // an AXI interface.
+//
+// NOTE: Is there a way to do with with [[DataView]]?
 class AXIExternalPort(addr_width: Int, data_width: Int, id_width: Int = 6) 
   extends Bundle 
 {
@@ -205,70 +207,7 @@ class AXIExternalPort(addr_width: Int, data_width: Int, id_width: Int = 6)
     this.RID                := wire.rdata.bits.id
     this.RLAST              := wire.rdata.bits.last
   }
-
 }
-
-// Simple module that generates sequential 32-bit AXI read transations.
-// This only interacts with the ar/r channels.
-//class TestAXISourceReadDriver extends Module {
-//  val io = IO(new Bundle {
-//    val result_addr = Output(UInt(4.W))
-//    val result_data = Output(UInt(32.W))
-//    val result_resp = Output(AXIRespType())
-//    val axi = AXIPort.source(4, 32)
-//  })
-//  io.axi := DontCare
-//
-//  object TransferState extends ChiselEnum {
-//    val IDLE, WAIT = Value
-//  }
-//
-//  val state       = RegInit(TransferState.IDLE) 
-//  val addr        = RegInit(0.U(4.W))
-//  val result_addr = RegInit(0.U(4.W))
-//  val result_data = RegInit(0.U(32.W))
-//  val result_resp = RegInit(AXIRespType.OKAY)
-//
-//  // Single beat, fixed-burst, 4-byte transfer
-//  io.axi.raddr.bits.id    := "b100001".U
-//  io.axi.raddr.bits.addr  := addr
-//  io.axi.raddr.bits.size  := 4.U // 4-byte data
-//  io.axi.raddr.bits.len   := 1.U // 1 transfer
-//  io.axi.raddr.bits.burst := AXIBurstType.FIXED
-//  io.axi.raddr.bits.prot  := 0.U
-//  io.axi.raddr.bits.lock  := 0.U
-//  io.axi.raddr.bits.cache := 0.U
-//  io.axi.raddr.bits.qos   := 0.U
-//
-//  // Output on 'raddr' is valid when we aren't waiting for a response
-//  io.axi.raddr.valid := (state === TransferState.IDLE)
-//  // We're ready to receive input on 'rdata' when we're waiting
-//  io.axi.rdata.ready := (state === TransferState.WAIT)
-//
-//  // State machine
-//  switch (state) {
-//    is (TransferState.IDLE) {
-//      when (io.axi.raddr.fire) {
-//        state := TransferState.WAIT
-//      }
-//    }
-//    is (TransferState.WAIT) {
-//      when (io.axi.rdata.fire) {
-//        assert( io.axi.rdata.bits.resp === AXIRespType.OKAY )
-//        assert( io.axi.rdata.bits.last === true.B )
-//        result_addr := addr
-//        result_data := io.axi.rdata.bits.data
-//        result_resp := io.axi.rdata.bits.resp
-//        state       := TransferState.IDLE
-//        addr        := addr + 1.U
-//      }
-//    }
-//  }
-//
-//  io.result_addr := result_addr
-//  io.result_data := result_data
-//  io.result_resp := result_resp
-//}
 
 
 

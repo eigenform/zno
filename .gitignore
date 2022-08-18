@@ -1,2 +1,10 @@
 project/
 target/
+test_run_dir/
+synth/
+
+*.bin
+*.elf
+*.hex
+*.mem
+*.drawio
