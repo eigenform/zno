@@ -9,7 +9,7 @@ loop_head:
 	lw    x6, 0x0(x1)
 	addi  x6, x6, -1
 	sw    x6, 0x0(x1)
-	bgeu  x6, x0, loop_head
+	bne   x6, x0, loop_head
 done:
 	li    x4, 0xdeadbeef
 	

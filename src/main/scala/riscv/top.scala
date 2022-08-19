@@ -82,9 +82,12 @@ class Hart extends Module {
   lsu.io.src  := rs2_data
   lsu.io.off  := imm_data
 
-  rf.io.wp(0).en   := alu.io.rr
-  rf.io.wp(0).addr := Mux(alu.io.rr, uop.rd, 0.U)
-  rf.io.wp(0).data := Mux(alu.io.rr, alu.io.res, 0.U)
+  // FIXME: load rr
+  val has_rr = alu.io.rr || lsu.io.rr
+  rf.io.wp(0).en   := has_rr
+  rf.io.wp(0).addr := Mux(has_rr, uop.rd, 0.U)
+  val res_data = Mux(lsu.io.rr, lsu.io.data, alu.io.res)
+  rf.io.wp(0).data := Mux(has_rr, res_data, 0.U)
 
   pc := Mux(bcu.io.ok, bcu.io.tgt, (pc + 4.U))
 
@@ -102,9 +105,6 @@ class FetchUnit extends Module {
   ibus.addr  := io.pc
   ibus.wid   := DebugWidth.WORD
   io.inst    := ibus.data
-
-  printf("fetch %x from %x\n", io.inst, io.pc)
-
 }
 
 class ArithmeticLogicUnit extends Module {
@@ -148,6 +148,9 @@ class ArithmeticLogicUnit extends Module {
 
     is (ALU_LUI)   { io.res := io.y }
     is (ALU_AUIPC) { io.res := io.pc + io.y }
+  }
+  when (io.op =/= ALU_NOP) {
+    printf("[ALU] x=%x y=%x res=%x\n", io.x, io.y, io.res)
   }
 }
 
@@ -210,7 +213,7 @@ class LoadStoreUnit extends Module {
     val src  = Input(UInt(32.W)) // This is always RS2
     val off  = Input(UInt(32.W)) // This is always an immediate
 
-    val res  = Output(Bool())
+    val rr  = Output(Bool())
     val data = Output(UInt(32.W))
   })
 
@@ -219,38 +222,38 @@ class LoadStoreUnit extends Module {
   dbus.wid   := DebugWidth.NONE
   dbus.wdata := 0.U
   dbus.wen   := false.B
-  io.res     := false.B
+  io.rr     := false.B
   io.data    := 0.U
 
   val addr = Wire(UInt(32.W))
   addr := io.base + io.off
   switch (io.op) {
     is (LSU_LB) { 
-      printf("load byte addr=%x\n", addr) 
       dbus.addr  := addr
       dbus.wid   := DebugWidth.BYTE
       dbus.wdata := 0.U
       dbus.wen   := false.B
-      io.res     := true.B
+      io.rr     := true.B
       io.data    := dbus.data
+      printf("load byte addr=%x data=%x\n", addr, dbus.data) 
     }
     is (LSU_LH) { 
-      printf("load half addr=%x\n", addr)
       dbus.addr  := addr
       dbus.wid   := DebugWidth.HALF
       dbus.wdata := 0.U
       dbus.wen   := false.B
-      io.res     := true.B
+      io.rr     := true.B
       io.data    := dbus.data
+      printf("load half addr=%x data=%x\n", addr, dbus.data)
     }
     is (LSU_LW) { 
-      printf("load word addr=%x\n", addr)
       dbus.addr  := addr
       dbus.wid   := DebugWidth.WORD
       dbus.wdata := 0.U
       dbus.wen   := false.B
-      io.res     := true.B
+      io.rr     := true.B
       io.data    := dbus.data
+      printf("load word addr=%x data=%x\n", addr, dbus.data)
     }
     is (LSU_SB) { 
       printf("store byte addr=%x data=%x\n", addr, io.src)
@@ -299,6 +302,8 @@ class RegisterFileBRAM extends Module {
   for (rp <- io.rp) {
     rp.data := reg.read(rp.addr)
   }
+  printf("x1=%x x2=%x x3=%x x4=%x x5=%x x6=%x\n",
+    reg.read(1.U), reg.read(2.U), reg.read(3.U), reg.read(4.U), reg.read(5.U), reg.read(6.U))
 }
 
 
