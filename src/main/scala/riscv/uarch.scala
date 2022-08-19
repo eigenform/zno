@@ -22,6 +22,13 @@ object Operand extends ChiselEnum {
   val PC  = Value
 }
 
+class OperandCtrl extends Bundle {
+  val rd  = Bool()
+  val imm = Bool()
+  val rs1 = Bool()
+  val rs2 = Bool()
+}
+
 class Uop extends Bundle {
   val pc    = UInt(32.W)      // Program counter associated with this uop
   val enc   = InstEnc()       // Instruction encoding
@@ -29,6 +36,7 @@ class Uop extends Bundle {
   val aluop = ALUOp()         // Arithmetic/logic unit operation
   val bcuop = BCUOp()         // Branch comparator unit operation
   val lsuop = LSUOp()         // Load/store unit operation
+  val opctl = new OperandCtrl // Operand valid bits
   val imm   = UInt(32.W)      // Immediate data
   val rd    = UInt(5.W)       // Architectural destination register
   val rs1   = UInt(5.W)       // Architectural source register #1

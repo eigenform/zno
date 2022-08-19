@@ -3,11 +3,45 @@ package zno.riscv.decode
 
 import chisel3._
 import chisel3.util._
+import chisel3.experimental.BundleLiterals._
 import chisel3.experimental.ChiselEnum
 import chisel3.util.experimental.decode
 
 import zno.riscv.isa._
 import zno.riscv.uarch._
+
+// Trait for automatically converting a [[Bundle]] literal into a [[BitPat]].
+//
+// NOTE: '.to_bitpat()' is only supposed to be used on Bundle literals!
+//
+trait AsBitPat {
+  this: Bundle =>
+
+  // Get the UInt associated with some [[Data]].
+  def lit[T <: Data](n: T): UInt   = { n.litValue.U((n.getWidth).W) }
+
+  // Convert some [[Data]] into a [[BitPat]].
+  def pat[T <: Data](n: T): BitPat = { BitPat(lit(n)) }
+
+  val N = BitPat.N()
+  val Y = BitPat.Y()
+
+  def to_bitpat(): BitPat = {
+    val list: Seq[Data] = this.getElements.reverse
+    if (list.length == 1) {
+      pat(list(0))
+    }
+    else if (list.length >= 2) {
+      var res = pat(list(0)) ## pat(list(1))
+      for (field <- list.drop(2)) { 
+        res = res ## pat(field) 
+      }
+      res
+    } else {
+      throw new IllegalArgumentException("No elements in this bundle?")
+    }
+  }
+}
 
 
 object DecoderTable {
@@ -19,7 +53,7 @@ object DecoderTable {
   import InstEnc._
   import ExecutionUnit._
 
-  // This is a set of bitpatterns matching the instructions we support.
+  // This is a set of [[BitPat]] matching the instructions we support.
   // See https://github.com/riscv/riscv-opcodes for more information.
   // You can generate these with './parse_opcodes -chisel opcodes-rv32i'.
   object Instructions {
@@ -61,102 +95,87 @@ object DecoderTable {
     def FENCE_I            = BitPat("b?????????????????001?????0001111")
   }
 
-  // These are just helper functions to make these declarations easier.
-  def lit[T <: Data](n: T): UInt = { n.litValue.U((n.getWidth).W) }
-  def e[T <: Data](n: T): BitPat = { BitPat(lit(n)) }
-  val N = BitPat.N()
-  val Y = BitPat.Y()
 
-  // This is an arbitrary set of signals that we want to associate to the
-  // bitpattern for each instruction. 
-  class ControlSignals extends Bundle {
-    // The RISC-V instruction encoding type.
-    // This indicates which set of operands are used.
-    val enc   = InstEnc()
-
-    // The execution unit associated with this instruction.
-    // This indicates which opcode is used.
+  // The set of signals that we want to associate to the [[BitPat]] matching 
+  // each instruction.
+  class ControlSignals extends Bundle with AsBitPat {
     val eu    = ExecutionUnit()
-
-    var aluop = ALUOp() // An ALU opcode
-    var bcuop = BCUOp() // A BCU opcode
-    var lsuop = LSUOp() // An LSU opcode
+    val enc   = InstEnc()
+    var aluop = ALUOp()
+    var bcuop = BCUOp()
+    var lsuop = LSUOp()
   }
 
-  // A map from bitpatterns to an associated set of control signals.
+  // NOTE: This is just a nicer way to define a [[ControlSignals]] literal
+  // in the table below (instead of using the ugly BundleLiterals syntax).
+  object CtrlDef {
+    def apply(
+      eu: ExecutionUnit.Type, 
+      enc: InstEnc.Type, 
+      aluop: ALUOp.Type, 
+      bcuop: BCUOp.Type,
+      lsuop: LSUOp.Type
+    ): BitPat = {
+      (new ControlSignals).Lit(_.eu -> eu, _.enc -> enc, 
+        _.aluop -> aluop, _.bcuop -> bcuop, _.lsuop -> lsuop,
+      ).to_bitpat()
+    }
+
+  }
+
+  // A map from an instruction bitpattern to a set of control signals.
   val matches = Array(
-
-    // Conditional branches compare RS1 and RS2, and compute a branch target
-    // by adding the immediate to the PC
-    BEQ     -> e(EU_BCU) ## e(ENC_B)   ## e(ALU_NOP)   ## e(BCU_EQ)   ## e(LSU_NOP),   
-    BNE     -> e(EU_BCU) ## e(ENC_B)   ## e(ALU_NOP)   ## e(BCU_NEQ)  ## e(LSU_NOP),
-    BLT     -> e(EU_BCU) ## e(ENC_B)   ## e(ALU_NOP)   ## e(BCU_LT)   ## e(LSU_NOP),
-    BGE     -> e(EU_BCU) ## e(ENC_B)   ## e(ALU_NOP)   ## e(BCU_GE)   ## e(LSU_NOP),
-    BLTU    -> e(EU_BCU) ## e(ENC_B)   ## e(ALU_NOP)   ## e(BCU_LTU)  ## e(LSU_NOP),
-    BGEU    -> e(EU_BCU) ## e(ENC_B)   ## e(ALU_NOP)   ## e(BCU_GEU)  ## e(LSU_NOP),
-
-    // Unconditionally add the immediate to the PC
-    JAL     -> e(EU_BCU) ## e(ENC_J)   ## e(ALU_NOP)   ## e(BCU_JAL)  ## e(LSU_NOP),
-    // Unconditionally add RS1 to the immediate (then to the PC)
-    JALR    -> e(EU_BCU) ## e(ENC_I)   ## e(ALU_NOP)   ## e(BCU_JALR) ## e(LSU_NOP),
-
-    // ALU operation (immediate + 0)
-    LUI     -> e(EU_ALU) ## e(ENC_U)   ## e(ALU_LUI)   ## e(BCU_NOP)  ## e(LSU_NOP),
-    // ALU operation (immediate + PC)
-    AUIPC   -> e(EU_ALU) ## e(ENC_U)   ## e(ALU_AUIPC) ## e(BCU_NOP)  ## e(LSU_NOP),
-
-    // ALU operations with RS1 and immediate
-    ADDI    -> e(EU_ALU) ## e(ENC_I)   ## e(ALU_ADD)   ## e(BCU_NOP)  ## e(LSU_NOP),
-    SLTI    -> e(EU_ALU) ## e(ENC_I)   ## e(ALU_SLT)   ## e(BCU_NOP)  ## e(LSU_NOP),
-    SLTIU   -> e(EU_ALU) ## e(ENC_I)   ## e(ALU_SLTU)  ## e(BCU_NOP)  ## e(LSU_NOP),
-    XORI    -> e(EU_ALU) ## e(ENC_I)   ## e(ALU_XOR)   ## e(BCU_NOP)  ## e(LSU_NOP),
-    ORI     -> e(EU_ALU) ## e(ENC_I)   ## e(ALU_OR)    ## e(BCU_NOP)  ## e(LSU_NOP),
-    ANDI    -> e(EU_ALU) ## e(ENC_I)   ## e(ALU_AND)   ## e(BCU_NOP)  ## e(LSU_NOP),
-
-    // ALU operations with RS1 and RS2
-    ADD     -> e(EU_ALU) ## e(ENC_R)   ## e(ALU_ADD)   ## e(BCU_NOP)  ## e(LSU_NOP),
-    SUB     -> e(EU_ALU) ## e(ENC_R)   ## e(ALU_SUB)   ## e(BCU_NOP)  ## e(LSU_NOP),
-    SLL     -> e(EU_ALU) ## e(ENC_R)   ## e(ALU_SLL)   ## e(BCU_NOP)  ## e(LSU_NOP),
-    SLT     -> e(EU_ALU) ## e(ENC_R)   ## e(ALU_SLT)   ## e(BCU_NOP)  ## e(LSU_NOP),
-    SLTU    -> e(EU_ALU) ## e(ENC_R)   ## e(ALU_SLTU)  ## e(BCU_NOP)  ## e(LSU_NOP),
-    XOR     -> e(EU_ALU) ## e(ENC_R)   ## e(ALU_XOR)   ## e(BCU_NOP)  ## e(LSU_NOP),
-    SRL     -> e(EU_ALU) ## e(ENC_R)   ## e(ALU_SRL)   ## e(BCU_NOP)  ## e(LSU_NOP),
-    SRA     -> e(EU_ALU) ## e(ENC_R)   ## e(ALU_SRA)   ## e(BCU_NOP)  ## e(LSU_NOP),
-    OR      -> e(EU_ALU) ## e(ENC_R)   ## e(ALU_OR)    ## e(BCU_NOP)  ## e(LSU_NOP),
-    AND     -> e(EU_ALU) ## e(ENC_R)   ## e(ALU_AND)   ## e(BCU_NOP)  ## e(LSU_NOP),
-
-    LB      -> e(EU_LSU) ## e(ENC_I)   ## e(ALU_NOP)   ## e(BCU_NOP)  ## e(LSU_LB),
-    LH      -> e(EU_LSU) ## e(ENC_I)   ## e(ALU_NOP)   ## e(BCU_NOP)  ## e(LSU_LH),
-    LW      -> e(EU_LSU) ## e(ENC_I)   ## e(ALU_NOP)   ## e(BCU_NOP)  ## e(LSU_LW),
-
-    // TODO
-    //LBU     -> e(EU_LSU) ## e(ENC_I)   ## e(ALU_NOP)   ## e(BCU_NOP)  ## e(LSU_ILL),
-    //LHU     -> e(EU_LSU) ## e(ENC_I)   ## e(ALU_NOP)   ## e(BCU_NOP)  ## e(LSU_ILL),
-
-    SB      -> e(EU_LSU) ## e(ENC_S)   ## e(ALU_NOP)   ## e(BCU_NOP)  ## e(LSU_SB),
-    SH      -> e(EU_LSU) ## e(ENC_S)   ## e(ALU_NOP)   ## e(BCU_NOP)  ## e(LSU_SH),
-    SW      -> e(EU_LSU) ## e(ENC_S)   ## e(ALU_NOP)   ## e(BCU_NOP)  ## e(LSU_SW),
-    //FENCE   -> List(),
-    //FENCE_I -> List(),
+    BEQ     -> CtrlDef(EU_BCU, ENC_B, ALU_NOP,   BCU_EQ,   LSU_NOP),   
+    BNE     -> CtrlDef(EU_BCU, ENC_B, ALU_NOP,   BCU_NEQ,  LSU_NOP),
+    BLT     -> CtrlDef(EU_BCU, ENC_B, ALU_NOP,   BCU_LT,   LSU_NOP),
+    BGE     -> CtrlDef(EU_BCU, ENC_B, ALU_NOP,   BCU_GE,   LSU_NOP),
+    BLTU    -> CtrlDef(EU_BCU, ENC_B, ALU_NOP,   BCU_LTU,  LSU_NOP),
+    BGEU    -> CtrlDef(EU_BCU, ENC_B, ALU_NOP,   BCU_GEU,  LSU_NOP),
+    JAL     -> CtrlDef(EU_BCU, ENC_J, ALU_NOP,   BCU_JAL,  LSU_NOP),
+    JALR    -> CtrlDef(EU_BCU, ENC_I, ALU_NOP,   BCU_JALR, LSU_NOP),
+    LUI     -> CtrlDef(EU_ALU, ENC_U, ALU_LUI,   BCU_NOP,  LSU_NOP),
+    AUIPC   -> CtrlDef(EU_ALU, ENC_U, ALU_AUIPC, BCU_NOP,  LSU_NOP),
+    ADDI    -> CtrlDef(EU_ALU, ENC_I, ALU_ADD,   BCU_NOP,  LSU_NOP),
+    SLTI    -> CtrlDef(EU_ALU, ENC_I, ALU_SLT,   BCU_NOP,  LSU_NOP),
+    SLTIU   -> CtrlDef(EU_ALU, ENC_I, ALU_SLTU,  BCU_NOP,  LSU_NOP),
+    XORI    -> CtrlDef(EU_ALU, ENC_I, ALU_XOR,   BCU_NOP,  LSU_NOP),
+    ORI     -> CtrlDef(EU_ALU, ENC_I, ALU_OR,    BCU_NOP,  LSU_NOP),
+    ANDI    -> CtrlDef(EU_ALU, ENC_I, ALU_AND,   BCU_NOP,  LSU_NOP),
+    ADD     -> CtrlDef(EU_ALU, ENC_R, ALU_ADD,   BCU_NOP,  LSU_NOP),
+    SUB     -> CtrlDef(EU_ALU, ENC_R, ALU_SUB,   BCU_NOP,  LSU_NOP),
+    SLL     -> CtrlDef(EU_ALU, ENC_R, ALU_SLL,   BCU_NOP,  LSU_NOP),
+    SLT     -> CtrlDef(EU_ALU, ENC_R, ALU_SLT,   BCU_NOP,  LSU_NOP),
+    SLTU    -> CtrlDef(EU_ALU, ENC_R, ALU_SLTU,  BCU_NOP,  LSU_NOP),
+    XOR     -> CtrlDef(EU_ALU, ENC_R, ALU_XOR,   BCU_NOP,  LSU_NOP),
+    SRL     -> CtrlDef(EU_ALU, ENC_R, ALU_SRL,   BCU_NOP,  LSU_NOP),
+    SRA     -> CtrlDef(EU_ALU, ENC_R, ALU_SRA,   BCU_NOP,  LSU_NOP),
+    OR      -> CtrlDef(EU_ALU, ENC_R, ALU_OR,    BCU_NOP,  LSU_NOP),
+    AND     -> CtrlDef(EU_ALU, ENC_R, ALU_AND,   BCU_NOP,  LSU_NOP),
+    LB      -> CtrlDef(EU_LSU, ENC_I, ALU_NOP,   BCU_NOP,  LSU_LB),
+    LH      -> CtrlDef(EU_LSU, ENC_I, ALU_NOP,   BCU_NOP,  LSU_LH),
+    LW      -> CtrlDef(EU_LSU, ENC_I, ALU_NOP,   BCU_NOP,  LSU_LW),
+    LBU     -> CtrlDef(EU_LSU, ENC_I, ALU_NOP,   BCU_NOP,  LSU_ILL),
+    LHU     -> CtrlDef(EU_LSU, ENC_I, ALU_NOP,   BCU_NOP,  LSU_ILL),
+    SB      -> CtrlDef(EU_LSU, ENC_S, ALU_NOP,   BCU_NOP,  LSU_SB),
+    SH      -> CtrlDef(EU_LSU, ENC_S, ALU_NOP,   BCU_NOP,  LSU_SH),
+    SW      -> CtrlDef(EU_LSU, ENC_S, ALU_NOP,   BCU_NOP,  LSU_SW),
   )
 
   // The default set of control signals for instructions that do not match
   // any of the related bitpatterns.
   val default = {
-               e(EU_ILL) ## e(ENC_ILL) ## e(ALU_ILL)   ## e(BCU_ILL)  ## e(LSU_ILL) 
+               CtrlDef(EU_ILL, ENC_ILL, ALU_ILL, BCU_ILL, LSU_ILL)
   }
 
-  // Use some logic minimization (with ESPRESSO) to map an instruction to its 
-  // associated set of control signals. You probably need 'espresso' in your 
-  // $PATH (see https://github.com/chipsalliance/espresso), otherwise we fall 
-  // back on using Quine-McCluskey (although maybe it doesn't matter too much 
-  // for what we're interested doing here)?
+  // Generate a decoder that maps an instruction to some [[ControlSignals]].
+  // This uses logic minimization with ESPRESSO (which you'll probably need to
+  // install and put in your $PATH, see chipsalliance/espresso; otherwise
+  // I think Chisel will fall back to a different algorithm).
   //
-  // Chisel will complain about casting non-literal UInts to the various
-  // ChiselEnum objects here, but I haven't thought hard enough about whether
-  // or not we should actually care about this. 
-  //
-  def map_ctrl_signals(inst: UInt): ControlSignals = {
+  // If [[ControlSignals]] contains ChiselEnum objects, it will probably 
+  // complain about casting non-literal UInts; I haven't thought hard enough 
+  // about whether or not we should actually care about this. 
+  def generate_decoder(inst: UInt): ControlSignals = {
     assert(inst.getWidth == 32)
     chisel3.util.experimental.decode.decoder(inst,
       chisel3.util.experimental.decode.TruthTable(
@@ -176,29 +195,74 @@ class DecodeUnit extends Module {
     val uop   = Output(new Uop)
   })
 
-  val inst = io.inst
-  val imm  = WireDefault(0.U(32.W))
-  val ctrl = DecoderTable.map_ctrl_signals(inst)
+  val inst   = io.inst
+  val imm    = WireDefault(0.U(32.W))
+  val ctrl   = DecoderTable.generate_decoder(inst)
+  val imm_en = WireDefault(false.B)
+  val rd_en  = WireDefault(false.B)
+  val rs1_en = WireDefault(false.B)
+  val rs2_en = WireDefault(false.B)
 
-  // Generate the immediate data for this micro-op (if any)
+  // Generate information about operands for this micro-op
   switch (ctrl.enc) {
-    is (ENC_I) { imm := Cat(Fill(20, inst(31)), inst(31, 20)) }
-    is (ENC_S) { imm := Cat(Fill(20, inst(31)), inst(31, 25), inst(11, 7)) }
-    is (ENC_B) { imm := Cat(Fill(19, inst(31)), inst(31), inst(7), inst(30, 25), inst(11, 8), 0.U(1.W)) }
-    is (ENC_U) { imm := Cat(inst(31, 12), Fill(12, 0.U)) }
-    is (ENC_J) { imm := Cat(Fill(11, inst(31)), inst(31), inst(19, 12), inst(20), inst(30, 21), 0.U(1.W)) }
+    is (ENC_R) {
+      rd_en  := true.B
+      rs1_en := true.B
+      rs2_en := true.B
+      imm_en := false.B
+      imm    := 0.U
+    }
+    is (ENC_I) { 
+      rd_en  := true.B
+      rs1_en := true.B
+      rs2_en := false.B
+      imm_en := true.B
+      imm    := Cat(Fill(20, inst(31)), inst(31, 20))
+    }
+    is (ENC_S) { 
+      rd_en  := false.B
+      rs1_en := true.B
+      rs2_en := true.B
+      imm_en := true.B
+      imm    := Cat(Fill(20, inst(31)), inst(31, 25), inst(11, 7))
+    }
+    is (ENC_B) { 
+      rd_en  := false.B
+      rs1_en := true.B
+      rs2_en := true.B
+      imm_en := true.B
+      imm    := Cat(Fill(19, inst(31)), inst(31), inst(7), inst(30, 25), inst(11, 8), 0.U(1.W))
+    }
+    is (ENC_U) { 
+      rd_en  := true.B
+      rs1_en := false.B
+      rs2_en := false.B
+      imm_en := true.B
+      imm    := Cat(inst(31, 12), Fill(12, 0.U))
+    }
+    is (ENC_J) { 
+      rd_en  := true.B
+      rs1_en := false.B
+      rs2_en := false.B
+      imm_en := true.B
+      imm    := Cat(Fill(11, inst(31)), inst(31), inst(19, 12), inst(20), inst(30, 21), 0.U(1.W))
+    }
   }
 
-  io.uop.eu    := ctrl.eu
-  io.uop.enc   := ctrl.enc
-  io.uop.aluop := ctrl.aluop
-  io.uop.bcuop := ctrl.bcuop
-  io.uop.lsuop := ctrl.lsuop
-  io.uop.rd    := inst(11, 7)
-  io.uop.rs1   := inst(19, 15)
-  io.uop.rs2   := inst(24, 20)
-  io.uop.imm   := imm
-  io.uop.pc    := io.pc
+  io.uop.opctl.rd  := rd_en
+  io.uop.opctl.rs1 := rs1_en
+  io.uop.opctl.rs2 := rs2_en
+  io.uop.opctl.imm := imm_en
+  io.uop.eu        := ctrl.eu
+  io.uop.enc       := ctrl.enc
+  io.uop.aluop     := ctrl.aluop
+  io.uop.bcuop     := ctrl.bcuop
+  io.uop.lsuop     := ctrl.lsuop
+  io.uop.rd        := inst(11, 7)
+  io.uop.rs1       := inst(19, 15)
+  io.uop.rs2       := inst(24, 20)
+  io.uop.imm       := imm
+  io.uop.pc        := io.pc
 
 }
 

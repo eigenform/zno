@@ -11,6 +11,8 @@ import zno.riscv.decode._
 import zno.riscv.dbg._
 
 class Hart extends Module {
+  import InstEnc._
+
   val dbg      = IO(Output(new DebugOutput))
   val ibus     = IO(new DebugBus)
   val dbus     = IO(new DebugBus)
@@ -18,102 +20,72 @@ class Hart extends Module {
   val pc       = RegInit(0x00000000.U(32.W))
   val fetch    = Module(new FetchUnit)
   val decode   = Module(new DecodeUnit)
-  val rf       = Module(new RegisterFile)
+  val rf       = Module(new RegisterFileBRAM)
   val alu      = Module(new ArithmeticLogicUnit)
   val bcu      = Module(new BranchCompareUnit)
   val lsu      = Module(new LoadStoreUnit)
 
-  val imm_en   = WireDefault(false.B)
-  val rs1_en   = WireDefault(false.B)
-  val rs2_en   = WireDefault(false.B)
-  val rs1_data = WireDefault(0.U(32.W))
-  val rs2_data = WireDefault(0.U(32.W))
-  val imm_data = WireDefault(0.U(32.W))
+  val uop      = decode.io.uop
 
+  // Connect I/Os
   dbg.pc      := pc
   dbg.if_inst := fetch.io.inst
   dbg.id_uop  := decode.io.uop
+  fetch.ibus  <> ibus
+  lsu.dbus    <> dbus
 
-  fetch.ibus     <> ibus
-  lsu.dbus       <> dbus
+  val imm_en   = (uop.enc =/= ENC_R)
+  val rs1_en   = (uop.enc === ENC_R || uop.enc === ENC_I || 
+                  uop.enc === ENC_S || uop.enc === ENC_B)
+  val rs2_en   = (uop.enc === ENC_R || uop.enc === ENC_S || uop.enc === ENC_B)
+  val rs1_data = Mux(rs1_en, rf.io.rp(0).data, 0.U)
+  val rs2_data = Mux(rs2_en, rf.io.rp(1).data, 0.U)
+  val imm_data = Mux(imm_en, uop.imm, 0.U)
 
-  fetch.io.pc    := pc
-  decode.io.inst := fetch.io.inst
-  decode.io.pc   := pc
 
-  val uop = decode.io.uop
-  imm_en   := (uop.enc =/= InstEnc.ENC_R)
-  rs1_en   := (
-    uop.enc === InstEnc.ENC_R || uop.enc === InstEnc.ENC_I ||
-    uop.enc === InstEnc.ENC_S || uop.enc === InstEnc.ENC_B
-  )
-  rs2_en   := (
-    uop.enc === InstEnc.ENC_R || uop.enc === InstEnc.ENC_S ||
-    uop.enc === InstEnc.ENC_B
-  )
-
-  // Defaults for read ports
   rf.io.rp(0).addr := Mux(rs1_en, uop.rs1, 0.U)
   rf.io.rp(1).addr := Mux(rs2_en, uop.rs2, 0.U)
-
-  // Defaults for write ports
   rf.io.wp(0).addr := 0.U
   rf.io.wp(0).data := 0.U
   rf.io.wp(0).en   := false.B
 
-  rs1_data         := Mux(rs1_en, rf.io.rp(0).data, 0.U)
-  rs2_data         := Mux(rs2_en, rf.io.rp(1).data, 0.U)
-  imm_data         := Mux(imm_en, uop.imm, 0.U)
-
-  alu.io.op := ALUOp.ALU_NOP
-  alu.io.pc := pc
-  alu.io.x  := 0.U
-  alu.io.y  := 0.U
-
-  bcu.io.op  := BCUOp.BCU_NOP
-  bcu.io.pc  := pc
-  bcu.io.rs1 := 0.U
-  bcu.io.rs2 := 0.U
-  bcu.io.off := 0.U
-
+  alu.io.op   := ALUOp.ALU_NOP
+  alu.io.pc   := pc
+  alu.io.x    := 0.U
+  alu.io.y    := 0.U
+  bcu.io.op   := BCUOp.BCU_NOP
+  bcu.io.pc   := pc
+  bcu.io.rs1  := 0.U
+  bcu.io.rs2  := 0.U
+  bcu.io.off  := 0.U
   lsu.io.op   := LSUOp.LSU_NOP
   lsu.io.pc   := pc
   lsu.io.base := 0.U
   lsu.io.src  := 0.U
   lsu.io.off  := 0.U
+  fetch.io.pc    := pc
+  decode.io.pc   := pc
+  decode.io.inst := fetch.io.inst
 
-  switch (decode.io.uop.eu) {
-    is (ExecutionUnit.EU_ALU) {
-      alu.io.op := uop.aluop
-      alu.io.pc := uop.pc
-      alu.io.x  := rs1_data
-      alu.io.y  := Mux(imm_en, imm_data, rs2_data)
+  alu.io.op   := uop.aluop
+  alu.io.pc   := uop.pc
+  alu.io.x    := rs1_data
+  alu.io.y    := Mux(imm_en, imm_data, rs2_data)
+  bcu.io.op   := uop.bcuop
+  bcu.io.pc   := uop.pc
+  bcu.io.rs1  := rs1_data
+  bcu.io.rs2  := rs2_data
+  bcu.io.off  := imm_data
+  lsu.io.op   := uop.lsuop
+  lsu.io.pc   := uop.pc
+  lsu.io.base := rs1_data
+  lsu.io.src  := rs2_data
+  lsu.io.off  := imm_data
 
-    }
-    is (ExecutionUnit.EU_BCU) {
-      bcu.io.op  := uop.bcuop
-      bcu.io.pc  := uop.pc
-      bcu.io.rs1 := rs1_data
-      bcu.io.rs2 := rs2_data
-      bcu.io.off := imm_data
-    }
-    is (ExecutionUnit.EU_LSU) {
-      lsu.io.op   := uop.lsuop
-      lsu.io.pc   := uop.pc
-      lsu.io.base := rs1_data
-      lsu.io.src  := rs2_data
-      lsu.io.off  := imm_data
-    }
-    is (ExecutionUnit.EU_ILL) { 
-    }
-  }
-
-  // Register file write
   rf.io.wp(0).en   := alu.io.rr
   rf.io.wp(0).addr := Mux(alu.io.rr, uop.rd, 0.U)
   rf.io.wp(0).data := Mux(alu.io.rr, alu.io.res, 0.U)
 
-  // Branch/next-sequential instruction
   pc := Mux(bcu.io.ok, bcu.io.tgt, (pc + 4.U))
 
 
@@ -148,8 +120,6 @@ class ArithmeticLogicUnit extends Module {
     val err = Output(Bool())
   })
   val shamt = io.y(4, 0).asUInt
-
-  printf(p"ALU op=${io.op} x=${io.x} y=${io.y}\n")
 
   io.res := 0.U
   io.rr  := true.B
@@ -197,48 +167,35 @@ class BranchCompareUnit extends Module {
     val err = Output(Bool())
   })
 
-  // Default
   io.ok  := false.B
   io.tgt := 0.U
-  io.err := false.B
+  io.err := (io.op === BCU_ILL)
+
+  // JALR is the only exceptional case (the immediate is added to RS1)
+  val base = Mux(io.op === BCU_JALR, io.rs1, io.pc)
+
+  // Compute the target address.
+  // (Just explicitly set to zero for BCU_NOP and BCU_ILL)
+  io.tgt := MuxCase(
+    ((base.asSInt + io.off.asSInt).asUInt), 
+    Array(
+      (io.op === BCU_NOP) -> 0.U,
+      (io.op === BCU_ILL) -> 0.U,
+    )
+  )
 
   // Evaluate the condition associated with this branch
   switch (io.op) {
-    is (BCU_ILL) {
-      io.err := true.B
-    }
-    is (BCU_EQ)   { 
-      io.ok  := (io.rs1 === io.rs2) 
-      io.tgt := io.pc + io.off 
-    }
-    is (BCU_NEQ)  { 
-      io.ok := (io.rs1 =/= io.rs2) 
-      io.tgt := io.pc + io.off 
-    }
-    is (BCU_LT)   { 
-      io.ok := (io.rs1.asSInt < io.rs2.asSInt) 
-      io.tgt := io.pc + io.off 
-    }
-    is (BCU_LTU)  { 
-      io.ok := (io.rs1 < io.rs2) 
-      io.tgt := io.pc + io.off 
-    }
-    is (BCU_GE)   { 
-      io.ok := (io.rs1.asSInt >= io.rs2.asSInt) 
-      io.tgt := io.pc + io.off 
-    }
-    is (BCU_GEU)  { 
-      io.ok := (io.rs1 >= io.rs2) 
-      io.tgt := io.pc + io.off 
-    }
-    is (BCU_JAL)  { 
-      io.ok := true.B 
-      io.tgt := io.pc + io.off 
-    }
-    is (BCU_JALR) { 
-      io.ok := true.B 
-      io.tgt := io.pc + (io.rs1 + io.off)
-    }
+    is (BCU_NOP)  { io.ok := false.B }
+    is (BCU_ILL)  { io.ok := false.B }
+    is (BCU_EQ)   { io.ok := (io.rs1 === io.rs2) }
+    is (BCU_NEQ)  { io.ok := (io.rs1 =/= io.rs2) }
+    is (BCU_LT)   { io.ok := (io.rs1.asSInt < io.rs2.asSInt) }
+    is (BCU_LTU)  { io.ok := (io.rs1 < io.rs2) }
+    is (BCU_GE)   { io.ok := (io.rs1.asSInt >= io.rs2.asSInt) }
+    is (BCU_GEU)  { io.ok := (io.rs1 >= io.rs2) }
+    is (BCU_JAL)  { io.ok := true.B }
+    is (BCU_JALR) { io.ok := true.B }
   }
 }
 
@@ -329,23 +286,12 @@ class RFWritePort extends Bundle {
   val en   = Input(Bool())
 }
 
-class RegisterFile extends Module {
+
+class RegisterFileBRAM extends Module {
   val io = IO(new Bundle {
     val rp = Vec(2, new RFReadPort)
     val wp = Vec(1, new RFWritePort)
   })
-
-  // NOTE: yosys will turn this into 1K FFs?
-  //val reg = Reg(Vec(32, UInt(32.W)))
-  //for (wp <- io.wp)
-  //  when (wp.en) {
-  //    reg(wp.addr) := wp.data
-  //  }
-  //for (rp <- io.rp)
-  //  rp.data := reg(rp.addr)
-
-  // NOTE: yosys turns this into RAM32M elements.
-  // Haven't checked if it works beyond a 2r1w configuration
   val reg = Mem(32, UInt(32.W))
   for (wp <- io.wp) {
     when (wp.en) { reg.write(wp.addr, wp.data) }
@@ -353,7 +299,19 @@ class RegisterFile extends Module {
   for (rp <- io.rp) {
     rp.data := reg.read(rp.addr)
   }
+}
 
+
+class RegisterFileFF extends Module {
+  val io = IO(new Bundle {
+    val rp = Vec(2, new RFReadPort)
+    val wp = Vec(1, new RFWritePort)
+  })
+  val reg = Reg(Vec(32, UInt(32.W)))
+  for (wp <- io.wp)
+    when (wp.en) { reg(wp.addr) := wp.data }
+  for (rp <- io.rp)
+    rp.data := reg(rp.addr)
 }
 
 
