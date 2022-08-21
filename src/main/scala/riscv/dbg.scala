@@ -80,14 +80,13 @@ class RvDut extends Module {
   val hart = Module(new Hart)
   hart.ibus <> irom.bus
   hart.dbus <> dram.bus
-  dbg       := hart.dbg
+  hart.dbg  <> dbg
 }
 
 
 class DebugOutput extends Bundle {
-  val pc      = Output(UInt(32.W))
-  val if_inst = Output(UInt(32.W))
-  val id_uop  = Output(new Uop)
+  val pc  = Output(UInt(32.W))
+  val cyc = Output(UInt(32.W))
 }
 
 

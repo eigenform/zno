@@ -12,6 +12,7 @@ loop_head:
 	bne   x6, x0, loop_head
 done:
 	li    x4, 0xdeadbeef
+	nop
 	
 
 .section .data

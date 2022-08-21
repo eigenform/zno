@@ -4,5 +4,6 @@ clean:
 rtl:
 	sbt 'runMain zno.elab.VerilogEmitter'
 test:
-	sbt test
+	sbt "testOnly RvSpec"
+	#sbt test
 

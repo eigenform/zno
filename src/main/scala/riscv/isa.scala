@@ -28,9 +28,6 @@ object ALUOp extends ChiselEnum {
   val ALU_OR   = Value
   val ALU_AND  = Value
 
-  val ALU_LUI  = Value
-  val ALU_AUIPC  = Value
-
   val ALU_ILL  = Value
   val ALU_NOP  = Value
 }
@@ -56,6 +53,8 @@ object LSUOp extends ChiselEnum {
   val LSU_LB   = Value
   val LSU_LH   = Value
   val LSU_LW   = Value
+  val LSU_LBU  = Value
+  val LSU_LHU  = Value
   val LSU_SB   = Value
   val LSU_SH   = Value
   val LSU_SW   = Value

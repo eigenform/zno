@@ -23,9 +23,6 @@ trait AsBitPat {
   // Convert some [[Data]] into a [[BitPat]].
   def pat[T <: Data](n: T): BitPat = { BitPat(lit(n)) }
 
-  val N = BitPat.N()
-  val Y = BitPat.Y()
-
   def to_bitpat(): BitPat = {
     val list: Seq[Data] = this.getElements.reverse
     if (list.length == 1) {
@@ -50,6 +47,8 @@ object DecoderTable {
   import ALUOp._
   import BCUOp._
   import LSUOp._
+  import Op1Sel._
+  import Op2Sel._
   import InstEnc._
   import ExecutionUnit._
 
@@ -101,6 +100,9 @@ object DecoderTable {
   class ControlSignals extends Bundle with AsBitPat {
     val eu    = ExecutionUnit()
     val enc   = InstEnc()
+    val rr    = Bool()
+    val op1   = Op1Sel()
+    val op2   = Op2Sel()
     var aluop = ALUOp()
     var bcuop = BCUOp()
     var lsuop = LSUOp()
@@ -112,59 +114,74 @@ object DecoderTable {
     def apply(
       eu: ExecutionUnit.Type, 
       enc: InstEnc.Type, 
+      rr: Data,
+      op1: Op1Sel.Type,
+      op2: Op2Sel.Type,
       aluop: ALUOp.Type, 
       bcuop: BCUOp.Type,
       lsuop: LSUOp.Type
     ): BitPat = {
-      (new ControlSignals).Lit(_.eu -> eu, _.enc -> enc, 
+      (new ControlSignals).Lit(_.eu -> eu, _.enc -> enc,
+        _.rr -> rr, _.op1 -> op1, _.op2 -> op2, 
         _.aluop -> aluop, _.bcuop -> bcuop, _.lsuop -> lsuop,
       ).to_bitpat()
     }
 
   }
 
+  //val N = BitPat.N()
+  //val Y = BitPat.Y()
+  val N = false.B
+  val Y = true.B
+
+
   // A map from an instruction bitpattern to a set of control signals.
   val matches = Array(
-    BEQ     -> CtrlDef(EU_BCU, ENC_B, ALU_NOP,   BCU_EQ,   LSU_NOP),   
-    BNE     -> CtrlDef(EU_BCU, ENC_B, ALU_NOP,   BCU_NEQ,  LSU_NOP),
-    BLT     -> CtrlDef(EU_BCU, ENC_B, ALU_NOP,   BCU_LT,   LSU_NOP),
-    BGE     -> CtrlDef(EU_BCU, ENC_B, ALU_NOP,   BCU_GE,   LSU_NOP),
-    BLTU    -> CtrlDef(EU_BCU, ENC_B, ALU_NOP,   BCU_LTU,  LSU_NOP),
-    BGEU    -> CtrlDef(EU_BCU, ENC_B, ALU_NOP,   BCU_GEU,  LSU_NOP),
-    JAL     -> CtrlDef(EU_BCU, ENC_J, ALU_NOP,   BCU_JAL,  LSU_NOP),
-    JALR    -> CtrlDef(EU_BCU, ENC_I, ALU_NOP,   BCU_JALR, LSU_NOP),
-    LUI     -> CtrlDef(EU_ALU, ENC_U, ALU_LUI,   BCU_NOP,  LSU_NOP),
-    AUIPC   -> CtrlDef(EU_ALU, ENC_U, ALU_AUIPC, BCU_NOP,  LSU_NOP),
-    ADDI    -> CtrlDef(EU_ALU, ENC_I, ALU_ADD,   BCU_NOP,  LSU_NOP),
-    SLTI    -> CtrlDef(EU_ALU, ENC_I, ALU_SLT,   BCU_NOP,  LSU_NOP),
-    SLTIU   -> CtrlDef(EU_ALU, ENC_I, ALU_SLTU,  BCU_NOP,  LSU_NOP),
-    XORI    -> CtrlDef(EU_ALU, ENC_I, ALU_XOR,   BCU_NOP,  LSU_NOP),
-    ORI     -> CtrlDef(EU_ALU, ENC_I, ALU_OR,    BCU_NOP,  LSU_NOP),
-    ANDI    -> CtrlDef(EU_ALU, ENC_I, ALU_AND,   BCU_NOP,  LSU_NOP),
-    ADD     -> CtrlDef(EU_ALU, ENC_R, ALU_ADD,   BCU_NOP,  LSU_NOP),
-    SUB     -> CtrlDef(EU_ALU, ENC_R, ALU_SUB,   BCU_NOP,  LSU_NOP),
-    SLL     -> CtrlDef(EU_ALU, ENC_R, ALU_SLL,   BCU_NOP,  LSU_NOP),
-    SLT     -> CtrlDef(EU_ALU, ENC_R, ALU_SLT,   BCU_NOP,  LSU_NOP),
-    SLTU    -> CtrlDef(EU_ALU, ENC_R, ALU_SLTU,  BCU_NOP,  LSU_NOP),
-    XOR     -> CtrlDef(EU_ALU, ENC_R, ALU_XOR,   BCU_NOP,  LSU_NOP),
-    SRL     -> CtrlDef(EU_ALU, ENC_R, ALU_SRL,   BCU_NOP,  LSU_NOP),
-    SRA     -> CtrlDef(EU_ALU, ENC_R, ALU_SRA,   BCU_NOP,  LSU_NOP),
-    OR      -> CtrlDef(EU_ALU, ENC_R, ALU_OR,    BCU_NOP,  LSU_NOP),
-    AND     -> CtrlDef(EU_ALU, ENC_R, ALU_AND,   BCU_NOP,  LSU_NOP),
-    LB      -> CtrlDef(EU_LSU, ENC_I, ALU_NOP,   BCU_NOP,  LSU_LB),
-    LH      -> CtrlDef(EU_LSU, ENC_I, ALU_NOP,   BCU_NOP,  LSU_LH),
-    LW      -> CtrlDef(EU_LSU, ENC_I, ALU_NOP,   BCU_NOP,  LSU_LW),
-    LBU     -> CtrlDef(EU_LSU, ENC_I, ALU_NOP,   BCU_NOP,  LSU_ILL),
-    LHU     -> CtrlDef(EU_LSU, ENC_I, ALU_NOP,   BCU_NOP,  LSU_ILL),
-    SB      -> CtrlDef(EU_LSU, ENC_S, ALU_NOP,   BCU_NOP,  LSU_SB),
-    SH      -> CtrlDef(EU_LSU, ENC_S, ALU_NOP,   BCU_NOP,  LSU_SH),
-    SW      -> CtrlDef(EU_LSU, ENC_S, ALU_NOP,   BCU_NOP,  LSU_SW),
+    BEQ     -> CtrlDef(EU_BCU, ENC_B, N, OP1_RS1, OP2_RS2, ALU_NOP, BCU_EQ,  LSU_NOP),   
+    BNE     -> CtrlDef(EU_BCU, ENC_B, N, OP1_RS1, OP2_RS2, ALU_NOP, BCU_NEQ, LSU_NOP),
+    BLT     -> CtrlDef(EU_BCU, ENC_B, N, OP1_RS1, OP2_RS2, ALU_NOP, BCU_LT,  LSU_NOP),
+    BGE     -> CtrlDef(EU_BCU, ENC_B, N, OP1_RS1, OP2_RS2, ALU_NOP, BCU_GE,  LSU_NOP),
+    BLTU    -> CtrlDef(EU_BCU, ENC_B, N, OP1_RS1, OP2_RS2, ALU_NOP, BCU_LTU, LSU_NOP),
+    BGEU    -> CtrlDef(EU_BCU, ENC_B, N, OP1_RS1, OP2_RS2, ALU_NOP, BCU_GEU, LSU_NOP),
+
+    JAL     -> CtrlDef(EU_BCU, ENC_J, Y, OP1_NAN, OP2_NAN, ALU_NOP, BCU_JAL,  LSU_NOP),
+    JALR    -> CtrlDef(EU_BCU, ENC_I, Y, OP1_RS1, OP2_NAN, ALU_NOP, BCU_JALR, LSU_NOP),
+
+    LUI     -> CtrlDef(EU_ALU, ENC_U, Y, OP1_NAN, OP2_IMM, ALU_ADD, BCU_NOP, LSU_NOP),
+    AUIPC   -> CtrlDef(EU_ALU, ENC_U, Y, OP1_PC,  OP2_IMM, ALU_ADD, BCU_NOP, LSU_NOP),
+
+    ADDI    -> CtrlDef(EU_ALU, ENC_I, Y, OP1_RS1, OP2_IMM, ALU_ADD,  BCU_NOP, LSU_NOP),
+    SLTI    -> CtrlDef(EU_ALU, ENC_I, Y, OP1_RS1, OP2_IMM, ALU_SLT,  BCU_NOP, LSU_NOP),
+    SLTIU   -> CtrlDef(EU_ALU, ENC_I, Y, OP1_RS1, OP2_IMM, ALU_SLTU, BCU_NOP, LSU_NOP),
+    XORI    -> CtrlDef(EU_ALU, ENC_I, Y, OP1_RS1, OP2_IMM, ALU_XOR,  BCU_NOP, LSU_NOP),
+    ORI     -> CtrlDef(EU_ALU, ENC_I, Y, OP1_RS1, OP2_IMM, ALU_OR,   BCU_NOP, LSU_NOP),
+    ANDI    -> CtrlDef(EU_ALU, ENC_I, Y, OP1_RS1, OP2_IMM, ALU_AND,  BCU_NOP, LSU_NOP),
+
+    ADD     -> CtrlDef(EU_ALU, ENC_R, Y, OP1_RS1, OP2_RS2, ALU_ADD,  BCU_NOP, LSU_NOP),
+    SUB     -> CtrlDef(EU_ALU, ENC_R, Y, OP1_RS1, OP2_RS2, ALU_SUB,  BCU_NOP, LSU_NOP),
+    SLL     -> CtrlDef(EU_ALU, ENC_R, Y, OP1_RS1, OP2_RS2, ALU_SLL,  BCU_NOP, LSU_NOP),
+    SLT     -> CtrlDef(EU_ALU, ENC_R, Y, OP1_RS1, OP2_RS2, ALU_SLT,  BCU_NOP, LSU_NOP),
+    SLTU    -> CtrlDef(EU_ALU, ENC_R, Y, OP1_RS1, OP2_RS2, ALU_SLTU, BCU_NOP, LSU_NOP),
+    XOR     -> CtrlDef(EU_ALU, ENC_R, Y, OP1_RS1, OP2_RS2, ALU_XOR,  BCU_NOP, LSU_NOP),
+    SRL     -> CtrlDef(EU_ALU, ENC_R, Y, OP1_RS1, OP2_RS2, ALU_SRL,  BCU_NOP, LSU_NOP),
+    SRA     -> CtrlDef(EU_ALU, ENC_R, Y, OP1_RS1, OP2_RS2, ALU_SRA,  BCU_NOP, LSU_NOP),
+    OR      -> CtrlDef(EU_ALU, ENC_R, Y, OP1_RS1, OP2_RS2, ALU_OR,   BCU_NOP, LSU_NOP),
+    AND     -> CtrlDef(EU_ALU, ENC_R, Y, OP1_RS1, OP2_RS2, ALU_AND,  BCU_NOP, LSU_NOP),
+
+    LB      -> CtrlDef(EU_LSU, ENC_I, Y, OP1_RS1, OP2_RS2, ALU_NOP,  BCU_NOP, LSU_LB),
+    LH      -> CtrlDef(EU_LSU, ENC_I, Y, OP1_RS1, OP2_RS2, ALU_NOP,  BCU_NOP, LSU_LH),
+    LW      -> CtrlDef(EU_LSU, ENC_I, Y, OP1_RS1, OP2_RS2, ALU_NOP,  BCU_NOP, LSU_LW),
+    LBU     -> CtrlDef(EU_LSU, ENC_I, Y, OP1_RS1, OP2_RS2, ALU_NOP,  BCU_NOP, LSU_ILL),
+    LHU     -> CtrlDef(EU_LSU, ENC_I, Y, OP1_RS1, OP2_RS2, ALU_NOP,  BCU_NOP, LSU_ILL),
+    SB      -> CtrlDef(EU_LSU, ENC_S, N, OP1_RS1, OP2_RS2, ALU_NOP,  BCU_NOP, LSU_SB),
+    SH      -> CtrlDef(EU_LSU, ENC_S, N, OP1_RS1, OP2_RS2, ALU_NOP,  BCU_NOP, LSU_SH),
+    SW      -> CtrlDef(EU_LSU, ENC_S, N, OP1_RS1, OP2_RS2, ALU_NOP,  BCU_NOP, LSU_SW),
   )
 
   // The default set of control signals for instructions that do not match
   // any of the related bitpatterns.
   val default = {
-               CtrlDef(EU_ILL, ENC_ILL, ALU_ILL, BCU_ILL, LSU_ILL)
+        CtrlDef(EU_ILL, ENC_ILL, N, OP1_NAN, OP2_NAN, ALU_ILL, BCU_ILL, LSU_ILL)
   }
 
   // Generate a decoder that maps an instruction to some [[ControlSignals]].
@@ -188,11 +205,11 @@ object DecoderTable {
 
 class DecodeUnit extends Module {
   import InstEnc._
+  val uop = IO(Output(new Uop))
 
   val io = IO(new Bundle {
     val pc    = Input(UInt(32.W))
     val inst  = Input(UInt(32.W))
-    val uop   = Output(new Uop)
   })
 
   val inst   = io.inst
@@ -205,64 +222,26 @@ class DecodeUnit extends Module {
 
   // Generate information about operands for this micro-op
   switch (ctrl.enc) {
-    is (ENC_R) {
-      rd_en  := true.B
-      rs1_en := true.B
-      rs2_en := true.B
-      imm_en := false.B
-      imm    := 0.U
-    }
-    is (ENC_I) { 
-      rd_en  := true.B
-      rs1_en := true.B
-      rs2_en := false.B
-      imm_en := true.B
-      imm    := Cat(Fill(20, inst(31)), inst(31, 20))
-    }
-    is (ENC_S) { 
-      rd_en  := false.B
-      rs1_en := true.B
-      rs2_en := true.B
-      imm_en := true.B
-      imm    := Cat(Fill(20, inst(31)), inst(31, 25), inst(11, 7))
-    }
-    is (ENC_B) { 
-      rd_en  := false.B
-      rs1_en := true.B
-      rs2_en := true.B
-      imm_en := true.B
-      imm    := Cat(Fill(19, inst(31)), inst(31), inst(7), inst(30, 25), inst(11, 8), 0.U(1.W))
-    }
-    is (ENC_U) { 
-      rd_en  := true.B
-      rs1_en := false.B
-      rs2_en := false.B
-      imm_en := true.B
-      imm    := Cat(inst(31, 12), Fill(12, 0.U))
-    }
-    is (ENC_J) { 
-      rd_en  := true.B
-      rs1_en := false.B
-      rs2_en := false.B
-      imm_en := true.B
-      imm    := Cat(Fill(11, inst(31)), inst(31), inst(19, 12), inst(20), inst(30, 21), 0.U(1.W))
-    }
+    is (ENC_R) { imm := 0.U }
+    is (ENC_I) { imm := Cat(Fill(20, inst(31)), inst(31, 20)) }
+    is (ENC_S) { imm := Cat(Fill(20, inst(31)), inst(31, 25), inst(11, 7)) }
+    is (ENC_B) { imm := Cat(Fill(19, inst(31)), inst(31), inst(7), inst(30, 25), inst(11, 8), 0.U(1.W)) }
+    is (ENC_U) { imm := Cat(inst(31, 12), Fill(12, 0.U)) }
+    is (ENC_J) { imm := Cat(Fill(11, inst(31)), inst(31), inst(19, 12), inst(20), inst(30, 21), 0.U(1.W)) }
   }
 
-  io.uop.opctl.rd  := rd_en
-  io.uop.opctl.rs1 := rs1_en
-  io.uop.opctl.rs2 := rs2_en
-  io.uop.opctl.imm := imm_en
-  io.uop.eu        := ctrl.eu
-  io.uop.enc       := ctrl.enc
-  io.uop.aluop     := ctrl.aluop
-  io.uop.bcuop     := ctrl.bcuop
-  io.uop.lsuop     := ctrl.lsuop
-  io.uop.rd        := inst(11, 7)
-  io.uop.rs1       := inst(19, 15)
-  io.uop.rs2       := inst(24, 20)
-  io.uop.imm       := imm
-  io.uop.pc        := io.pc
+  uop.eu        := ctrl.eu
+  uop.rr        := ctrl.rr
+  uop.op1       := ctrl.op1
+  uop.op2       := ctrl.op2
+  uop.aluop     := ctrl.aluop
+  uop.bcuop     := ctrl.bcuop
+  uop.lsuop     := ctrl.lsuop
+  uop.rd        := inst(11, 7)
+  uop.rs1       := inst(19, 15)
+  uop.rs2       := inst(24, 20)
+  uop.imm       := imm
+  uop.pc        := io.pc
 
 }
 
