@@ -23,6 +23,7 @@ class DebugBus extends Bundle {
   val addr  = Output(UInt(32.W))
   val wdata = Output(UInt(32.W))
   val wen   = Output(Bool())
+  val ren   = Output(Bool())
   val data  = Input(UInt(32.W))
 }
 
@@ -70,17 +71,6 @@ class DebugRAM extends Module {
     mem.write(addr, bus.wdata.asTypeOf(Vec(4, UInt(8.W))), bus.wid.asUInt.asBools)
   }
 
-}
-
-
-class RvDut extends Module {
-  val dbg  = IO(new DebugOutput)
-  val irom = Module(new DebugROM("rvfw/test.text.mem"))
-  val dram = Module(new DebugRAM)
-  val hart = Module(new Hart)
-  hart.ibus <> irom.bus
-  hart.dbus <> dram.bus
-  hart.dbg  <> dbg
 }
 
 

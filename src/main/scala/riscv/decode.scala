@@ -202,47 +202,45 @@ object DecoderTable {
   }
 }
 
-
 class DecodeUnit extends Module {
   import InstEnc._
-  val uop = IO(Output(new Uop))
+  import ExecutionUnit._
 
-  val io = IO(new Bundle {
-    val pc    = Input(UInt(32.W))
-    val inst  = Input(UInt(32.W))
-  })
+  val req = IO(Flipped(Valid(new FetchPacket)))
+  val res = IO(Valid(Output(new Uop)))
+  val imm = WireDefault(0.U(32.W))
 
-  val inst   = io.inst
-  val imm    = WireDefault(0.U(32.W))
-  val ctrl   = DecoderTable.generate_decoder(inst)
-  val imm_en = WireDefault(false.B)
-  val rd_en  = WireDefault(false.B)
-  val rs1_en = WireDefault(false.B)
-  val rs2_en = WireDefault(false.B)
+  res.valid := req.valid
+  res.bits.drive_defaults()
 
-  // Generate information about operands for this micro-op
-  switch (ctrl.enc) {
-    is (ENC_R) { imm := 0.U }
-    is (ENC_I) { imm := Cat(Fill(20, inst(31)), inst(31, 20)) }
-    is (ENC_S) { imm := Cat(Fill(20, inst(31)), inst(31, 25), inst(11, 7)) }
-    is (ENC_B) { imm := Cat(Fill(19, inst(31)), inst(31), inst(7), inst(30, 25), inst(11, 8), 0.U(1.W)) }
-    is (ENC_U) { imm := Cat(inst(31, 12), Fill(12, 0.U)) }
-    is (ENC_J) { imm := Cat(Fill(11, inst(31)), inst(31), inst(19, 12), inst(20), inst(30, 21), 0.U(1.W)) }
+
+  when (req.valid) {
+    val inst   = req.bits.inst
+    val ctrl   = DecoderTable.generate_decoder(inst)
+    switch (ctrl.enc) {
+      is (ENC_R) { imm := 0.U }
+      is (ENC_I) { imm := Cat(Fill(20, inst(31)), inst(31, 20)) }
+      is (ENC_S) { imm := Cat(Fill(20, inst(31)), inst(31, 25), inst(11, 7)) }
+      is (ENC_B) { imm := Cat(Fill(19, inst(31)), inst(31), inst(7), inst(30, 25), inst(11, 8), 0.U(1.W)) }
+      is (ENC_U) { imm := Cat(inst(31, 12), Fill(12, 0.U)) }
+      is (ENC_J) { imm := Cat(Fill(11, inst(31)), inst(31), inst(19, 12), inst(20), inst(30, 21), 0.U(1.W)) }
+    }
+    res.bits.eu    := ctrl.eu
+    res.bits.rr    := ctrl.rr
+    res.bits.op1   := ctrl.op1
+    res.bits.op2   := ctrl.op2
+    res.bits.aluop := ctrl.aluop
+    res.bits.bcuop := ctrl.bcuop
+    res.bits.lsuop := ctrl.lsuop
+    res.bits.rd    := inst(11, 7)
+    res.bits.rs1   := inst(19, 15)
+    res.bits.rs2   := inst(24, 20)
+    res.bits.imm   := imm
+    res.bits.pc    := req.bits.pc
   }
 
-  uop.eu        := ctrl.eu
-  uop.rr        := ctrl.rr
-  uop.op1       := ctrl.op1
-  uop.op2       := ctrl.op2
-  uop.aluop     := ctrl.aluop
-  uop.bcuop     := ctrl.bcuop
-  uop.lsuop     := ctrl.lsuop
-  uop.rd        := inst(11, 7)
-  uop.rs1       := inst(19, 15)
-  uop.rs2       := inst(24, 20)
-  uop.imm       := imm
-  uop.pc        := io.pc
-
+  printf("[ID] valid=%d pc=%x rd=%x rs1=%x rs2=%x\n", 
+    req.valid, req.bits.pc, res.bits.rd, res.bits.rs1, res.bits.rs2)
 }
 
 

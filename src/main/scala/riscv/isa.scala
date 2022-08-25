@@ -17,16 +17,23 @@ object InstEnc extends ChiselEnum {
 
 // Distinct types of ALU operations.
 object ALUOp extends ChiselEnum {
-  val ALU_ADD  = Value
-  val ALU_SUB  = Value
-  val ALU_SLL  = Value
-  val ALU_SLT  = Value
-  val ALU_SLTU = Value
-  val ALU_XOR  = Value
-  val ALU_SRL  = Value
-  val ALU_SRA  = Value
-  val ALU_OR   = Value
-  val ALU_AND  = Value
+  val ALU_ADD   = Value
+  val ALU_SUB   = Value
+  val ALU_SLL   = Value
+  val ALU_SLT   = Value
+  val ALU_SLTU  = Value
+  val ALU_XOR   = Value
+  val ALU_SRL   = Value
+  val ALU_SRA   = Value
+  val ALU_OR    = Value
+  val ALU_AND   = Value
+
+  val ALU_ADDI  = Value
+  val ALU_SLTI  = Value
+  val ALU_SLTIU = Value
+  val ALU_XORI  = Value
+  val ALU_ORI   = Value
+  val ALU_ANDI  = Value
 
   val ALU_ILL  = Value
   val ALU_NOP  = Value

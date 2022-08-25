@@ -14,6 +14,6 @@ object VerilogEmitter extends App {
     .emitVerilog(new zno.riscv.hart.Hart(), emitter_args)
 
   (new chisel3.stage.ChiselStage)
-    .emitVerilog(new zno.riscv.dbg.RvDut(), emitter_args)
+    .emitVerilog(new zno.riscv.top.Top(), emitter_args)
 
 }

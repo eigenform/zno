@@ -84,7 +84,7 @@ class RvSpec extends AnyFlatSpec with ChiselScalatestTester {
 
       fork {
         var steps = 0
-        while (dut.dbg.pc.peek().litValue != 0x2c) {
+        while (dut.dbg.pc.peek().litValue != 0x68) {
         //while (steps < 24) {
           println("------------------------------------------")
           rom.run()

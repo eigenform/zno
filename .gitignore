@@ -8,3 +8,4 @@ synth/
 *.hex
 *.mem
 *.drawio
+*.f
