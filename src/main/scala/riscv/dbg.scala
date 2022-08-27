@@ -25,6 +25,14 @@ class DebugBus extends Bundle {
   val wen   = Output(Bool())
   val ren   = Output(Bool())
   val data  = Input(UInt(32.W))
+
+  def drive_defaults(): Unit = {
+    this.wid   := DebugWidth.NONE
+    this.addr  := 0.U
+    this.wdata := 0.U
+    this.wen   := false.B
+    this.ren   := false.B
+  }
 }
 
 class DebugROM(rom_file: String) extends Module {

@@ -5,20 +5,20 @@ import chisel3._
 import chisel3.util._
 import chisel3.experimental.ChiselEnum
 
+// Generic register file read port
 class RFReadPort extends Bundle {
   val addr = Input(UInt(5.W))
   val data = Output(UInt(32.W))
-
   def drive_defaults(): Unit = {
     this.addr := 0.U
   }
 }
 
+// Generic register file write port
 class RFWritePort extends Bundle {
   val addr = Input(UInt(5.W))
   val data = Input(UInt(32.W))
   val en   = Input(Bool())
-
   def drive_defaults(): Unit = {
     this.addr := 0.U
     this.data := 0.U
@@ -26,6 +26,7 @@ class RFWritePort extends Bundle {
   }
 }
 
+// NOTE: You should try to use this version if you're targeting FPGA.
 class RegisterFileBRAM extends Module {
   val io = IO(new Bundle {
     val rp = Vec(2, new RFReadPort)
@@ -41,8 +42,16 @@ class RegisterFileBRAM extends Module {
     rp.data := Mux(rp.addr === 0.U, 0.U, reg.read(rp.addr))
   }
   printf("x1=%x x2=%x x3=%x x4=%x x5=%x x6=%x\n",
-    reg.read(1.U), reg.read(2.U), reg.read(3.U), reg.read(4.U), reg.read(5.U), reg.read(6.U))
+    reg.read(1.U), reg.read(2.U), reg.read(3.U), reg.read(4.U), 
+    reg.read(5.U), reg.read(6.U)
+  )
 }
+
+// NOTE: If you're planning on exploring synthesis for ASICs, you might want 
+// to explore smarter ways of compiling a register file for whatever cell
+// library you're targeting. Otherwise, there are massive area/power/routing 
+// requirements when a large multi-port register file is synthesized into a 
+// huge blob of DFF stdcells.
 
 class RegisterFileFF extends Module {
   val io = IO(new Bundle {

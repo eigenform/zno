@@ -62,6 +62,10 @@ class Uop extends Bundle {
 class FetchPacket extends Bundle {
   val pc   = UInt(32.W)
   val inst = UInt(32.W)
+  def drive_defaults(): Unit = {
+    this.pc   := 0.U
+    this.inst := 0.U
+  }
 }
 
 // A request to an AGU.
