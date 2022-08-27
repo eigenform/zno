@@ -239,6 +239,8 @@ class RegisterFileBypassing(
   import scala.collection.mutable.ArrayBuffer
 
   val io = IO(new Bundle {
+    val dbg = Vec(1 << awidth, Output(UInt(32.W)))
+
     val rp = Vec(num_rp, new RFReadPort(awidth))
     val wp = Vec(num_wp, new RFWritePort(awidth))
   })
@@ -261,8 +263,7 @@ class RegisterFileBypassing(
       reg(wp.addr) := wp.data 
     }
   }
-  printf("r1=%x r2=%x r3=%x r4=%x r5=%x\n",
-    reg(1), reg(2), reg(3), reg(4), reg(5))
+  io.dbg := reg
 }
 
 class MapReadPort(awidth: Int, pwidth: Int) extends Bundle {
@@ -292,14 +293,18 @@ class MapAllocPort(awidth: Int, pwidth: Int) extends Bundle {
 // When is this supposed to happen?
 //
 class RegisterMap(awidth: Int, pwidth: Int) extends Module {
-  val init = Cat(Fill(63, true.B), false.B)
   val io = IO(new Bundle {
+    val dbg = Vec(32, Output(UInt(pwidth.W)))
+
     val rp = Vec(2, new MapReadPort(awidth, pwidth))
     val ap = Vec(1, new MapAllocPort(awidth, pwidth))
   })
 
   val map       = Reg(Vec(32, UInt(pwidth.W)))
-  val oh_alc    = RegInit(UInt(64.W), init)
+  val alc_init  = Cat(Fill(63, true.B), false.B)
+  val oh_alc    = RegInit(UInt(64.W), alc_init)
+
+  // Select a free physical register
   val free_idx  = PriorityEncoder(oh_alc.asBools)
   val free_mask = UIntToOH(free_idx) 
 
@@ -317,26 +322,102 @@ class RegisterMap(awidth: Int, pwidth: Int) extends Module {
     rp.preg := Mux(rp.areg === 0.U, 0.U, map(rp.areg))
   }
   printf("oh_alc=%x free_idx=%x free_mask=%x\n", oh_alc, free_idx, free_mask)
+  io.dbg := map
 
 }
 
 
-// Note that the cost of some tricks scales up aggressively as the pipeline 
-// width increases; we're only dealing with a single instruction at a time.
+// Some notes about dynamic scheduling/out-of-order instruction pipelines.
+//
+// FIXME: Right now, we're only looking at issuing a single instruction at a
+// time, and all of our instructions have a single-cycle latency (this largely 
+// defeats the practical purpose).
+//
+// This pipeline is split into the following stages:
 //
 //   1. Rename architectural registers to physical registers
-//   2. Physical register file read
+//   2. Physical register file read (more generally, dependence resolution)
 //   3. Execution
 //   4. Commit/physical register file write
 //
-// # Bypass paths from execution units
+// Register Renaming
+// =================
+// Register renaming is sufficient to obviate only RAW dependences by removing 
+// all WAR and WAW dependences, since the result values for all in-flight
+// instructions are associated to a single unique physical storage location. 
+//
+// Without the potential aliasing between architectural storage locations, the
+// program naturally inherits a "dataflow graph" structure. In this form, a 
+// program is evaluated according to the ambient topological order given by 
+// the availability of values that satisfy RAW dependences.
+//
+// There are two structures we need to maintain:
+//
+//   1. A map from architectural register names to physical register names
+//   2. A list of free physical registers
+//
+// When an instruction produces a result, we allocate a physical register, and 
+// then bind it to the associated architectural register in the map. Each of 
+// the architectural source registers is resolved into a physical register by 
+// reading from the map.
+//
+// Physical registers are released for reuse only after their corresponding 
+// architectural register (a) has been bound to a different physical register 
+// by a younger instruction, and (b) after the younger instruction finally
+// commits its result value back to the physical register file. After this 
+// point, the association between an architectural register and a physical 
+// register is no longer valid.
+//
+// About Scheduling
+// ================
+// The order of a program is defined by the use of architectural registers:
+// these are used by a compiler (or a human) to link instructions to one 
+// another, in order to specify a more complicated operation on some data.
+//
+// If you take dataflow order to be the "optimal" representation of a program,
+// it becomes more obvious that the static scheduling performed by compilers 
+// (targeting modern O3 machines) is a kind of compression: 
+//
+//   - A program is typically written like a *linear procedure*
+//
+//   - The program is converted into a single static assignment (SSA) form,
+//     where each instruction corresponds to a unique storage location
+//
+//   - SSA form/dataflow order naturally obviates *paths* of different 
+//     computations in a procedure that can be evaluated independently 
+//     without respect to one another
+//   
+//   - A compiler tries to *optimize* this back into a *single* path where
+//     (a) the original [procedural] semantics are preserved, (b) the set of
+//     storage locations (architectural registers) is limited, and (c) the set
+//     of parallel machines [and their availability in] performing all of the 
+//     associated operations is limited
+//
+// In that sense, "dynamic scheduling" machines always attempt to decompress
+// the instruction stream into an "instruction window" bounded by the size of
+// the physical register file (and also by the size of a reorder buffer).
+//
+// Reordering Instructions
+// =======================
+//
+// TODO
+//
+//
+// Resolving RAW dependences
+// =========================
+//
+// TODO
+//
+// Bypass paths from execution units
+// ---------------------------------
 // Sometimes, the youngest instruction relies on a value that is currently
 // being computed in the execution stage, but whose result value has not 
 // been latched by the next pipeline register (feeding the commit stage). 
 // Instead of stalling, we can use a bypass path from the ALU output to 
 // directly provide the value to the dependent instruction.
 //
-// # Register file bypassing
+// Register file bypassing
+// -----------------------
 // The write port on the physical register file is linked directly to both
 // read ports. This allows us to resolve situations where the youngest
 // instruction depends on a value which is being committed by an older
@@ -452,18 +533,32 @@ class PipelineModelO3(awidth: Int, pwidth: Int) extends Module {
       req.bits.rd, req.bits.data)
   }
 
-  val map    = Module(new RegisterMap(awidth, pwidth))
-  val rf     = Module(new RegisterFileBypassing(pwidth, 
-                      num_rp=2, num_wp=1, byp=true))
-  val rrn    = Module(new RegisterRename)
-  val rfr    = Module(new RFRead)
-  val alu    = Module(new ALU)
-  val commit = Module(new CommitUnit)
-  val req_in = IO(Flipped(Valid(new Instruction(awidth))))
+  val map     = Module(new RegisterMap(awidth, pwidth))
+  val rf      = Module(new RegisterFileBypassing(pwidth, 
+                       num_rp=2, num_wp=1, byp=true))
+  val rrn     = Module(new RegisterRename)
+  val rfr     = Module(new RFRead)
+  val alu     = Module(new ALU)
+  val commit  = Module(new CommitUnit)
+  val req_in  = IO(Flipped(Valid(new Instruction(awidth))))
+  val res_out = IO(Valid(new Result(pwidth)))
 
   val stage_rrn = Reg(Valid(new Instruction(pwidth)))
   val stage_op  = Reg(Valid(new DataPacket(pwidth)))
   val stage_res = Reg(Valid(new Result(pwidth)))
+
+
+  printf("r1=%x r2=%x r3=%x r4=%x r5=%x r6=%x\n", 
+    map.io.dbg(1), map.io.dbg(2),
+    map.io.dbg(3), map.io.dbg(4),
+    map.io.dbg(5), map.io.dbg(6),
+  )
+
+  printf("r1=%x r2=%x r3=%x r4=%x r5=%x r6=%x\n", 
+    rf.io.dbg(map.io.dbg(1)), rf.io.dbg(map.io.dbg(2)),
+    rf.io.dbg(map.io.dbg(3)), rf.io.dbg(map.io.dbg(4)),
+    rf.io.dbg(map.io.dbg(5)), rf.io.dbg(map.io.dbg(6)),
+  )
 
   rrn.map_ap <> map.io.ap
   rrn.map_rp <> map.io.rp
@@ -479,5 +574,8 @@ class PipelineModelO3(awidth: Int, pwidth: Int) extends Module {
   rfr.bypass := alu.res
   alu.req    := stage_op
   commit.req := stage_res
+
+  res_out    := stage_res
+
 }
 
