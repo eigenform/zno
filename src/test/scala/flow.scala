@@ -39,7 +39,7 @@ class O3FlowSpec extends AnyFlatSpec with ChiselScalatestTester {
   import zno.pipeline_tests.InstType._
   behavior of "PipelineModelO3"
   it should "work" in {
-    test(new zno.pipeline_tests.PipelineModelO3(awidth = 5, pwidth = 6)) { 
+    test(new zno.pipeline_tests.PipelineModelO3) { 
       dut => 
       implicit val clk: Clock = dut.clock
       val prog = Seq(
@@ -54,12 +54,36 @@ class O3FlowSpec extends AnyFlatSpec with ChiselScalatestTester {
         Instr(5),
         Instr(5),
         Instr(5),
+        Instr(5),
+        Instr(5),
+        Instr(5),
+        Instr(5),
+        Instr(5),
+        Instr(5),
       )
-      for (i <- prog) {
+      var pc  = 0
+      var cyc = 0
+
+      while (cyc < 16) {
         println("----------------------------------------")
-        dut.req_in.poke(i)
+        val stalled = dut.stall.peek().litToBoolean
+        if (stalled) {
+          dut.req_in.poke(Instr(5))
+        } else {
+          dut.req_in.poke(prog(pc))
+          pc += 1
+        }
+
         clk.step()
+        cyc += 1
       }
+
+
+      //for (i <- prog) {
+      //  println("----------------------------------------")
+      //  dut.req_in.poke(i)
+      //  clk.step()
+      //}
     }
   }
 }

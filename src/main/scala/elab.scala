@@ -17,7 +17,7 @@ object VerilogEmitter extends App {
     .emitVerilog(new zno.riscv.top.Top(), emitter_args)
 
   (new chisel3.stage.ChiselStage)
-    .emitVerilog(new zno.pipeline_tests.PipelineModelO3(5, 6), emitter_args)
+    .emitVerilog(new zno.pipeline_tests.PipelineModelO3(), emitter_args)
 
 
 }

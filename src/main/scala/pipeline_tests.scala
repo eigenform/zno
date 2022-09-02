@@ -56,26 +56,6 @@ object Instr {
   }
 }
 
-class DataPacket(pwidth: Int) extends Bundle {
-  val rd  = UInt(pwidth.W)
-  val x   = UInt(32.W)
-  val y   = UInt(32.W)
-  def drive_defaults(): Unit = {
-    this.rd  := 0.U
-    this.x   := 0.U
-    this.y   := 0.U
-  }
-}
-
-class Result(pwidth: Int) extends Bundle {
-  val rd   = UInt(pwidth.W)
-  val data = UInt(32.W)
-  def drive_defaults(): Unit = {
-    this.rd   := 0.U
-    this.data := 0.U
-  }
-}
-
 class RFReadPort(awidth: Int) extends Bundle {
   val addr = Input(UInt(awidth.W))
   val data = Output(UInt(32.W))
@@ -152,6 +132,26 @@ class RegisterFile(awidth: Int) extends Module {
 //
 class PipelineModelValid extends Module {
 
+  class DataPacket(pwidth: Int) extends Bundle {
+    val rd  = UInt(pwidth.W)
+    val x   = UInt(32.W)
+    val y   = UInt(32.W)
+    def drive_defaults(): Unit = {
+      this.rd  := 0.U
+      this.x   := 0.U
+      this.y   := 0.U
+    }
+  }
+
+  class Result(pwidth: Int) extends Bundle {
+    val rd   = UInt(pwidth.W)
+    val data = UInt(32.W)
+    def drive_defaults(): Unit = {
+      this.rd   := 0.U
+      this.data := 0.U
+    }
+  }
+
   class RFRead extends Module {
     val rp      = IO(Vec(2, Flipped(new RFReadPort(5))))
     val req     = IO(Flipped(Valid(new Instruction(5))))
@@ -225,107 +225,6 @@ class PipelineModelValid extends Module {
 
 // ---------------------------------------------------------------------------
 
-// Multi-ported register files are already stupidly expensive, but you could 
-// also make them *even more expensive* by adding bypass paths directly from 
-// write ports to read ports. This allows for reading/writing from some entry 
-// in the same clock cycle.
-
-class RegisterFileBypassing(
-  awidth: Int, 
-  num_rp: Int, 
-  num_wp: Int, 
-  byp: Boolean,
-) extends Module {
-  import scala.collection.mutable.ArrayBuffer
-
-  val io = IO(new Bundle {
-    val dbg = Vec(1 << awidth, Output(UInt(32.W)))
-
-    val rp = Vec(num_rp, new RFReadPort(awidth))
-    val wp = Vec(num_wp, new RFWritePort(awidth))
-  })
-  val reg = Reg(Vec(1 << awidth, UInt(32.W)))
-
-  for (rp <- io.rp) {
-    rp.data := Mux(rp.addr === 0.U, 0.U, reg(rp.addr))
-
-    // Probably fine to fully-connect these if the port counts are low?
-    if (byp) {
-      for (wp <- io.wp) {
-        when (wp.en && wp.addr =/= 0.U && wp.addr === rp.addr) {
-          rp.data := wp.data
-        }
-      }
-    }
-  }
-  for (wp <- io.wp) {
-    when (wp.en && wp.addr =/= 0.U) { 
-      reg(wp.addr) := wp.data 
-    }
-  }
-  io.dbg := reg
-}
-
-class MapReadPort(awidth: Int, pwidth: Int) extends Bundle {
-  val areg = Input(UInt(awidth.W))
-  val preg = Output(UInt(pwidth.W))
-  def drive_defaults(): Unit = {
-    this.areg := 0.U
-  }
-}
-class MapAllocPort(awidth: Int, pwidth: Int) extends Bundle {
-  val areg = Input(UInt(awidth.W))
-  val en   = Input(Bool())
-  val preg = Valid(UInt(pwidth.W))
-  def drive_defaults(): Unit = {
-    this.areg := 0.U
-    this.en   := false.B
-  }
-}
-
-// A map from architectural registers to physical registers.
-//
-//   (a) Read ports resolve architectural registers to physical registers
-//   (b) Allocation ports allocate a physical register and bind it to
-//       an architectural register
-//
-// FIXME: You're not freeing any physical registers.
-// When is this supposed to happen?
-//
-class RegisterMap(awidth: Int, pwidth: Int) extends Module {
-  val io = IO(new Bundle {
-    val dbg = Vec(32, Output(UInt(pwidth.W)))
-
-    val rp = Vec(2, new MapReadPort(awidth, pwidth))
-    val ap = Vec(1, new MapAllocPort(awidth, pwidth))
-  })
-
-  val map       = Reg(Vec(32, UInt(pwidth.W)))
-  val alc_init  = Cat(Fill(63, true.B), false.B)
-  val oh_alc    = RegInit(UInt(64.W), alc_init)
-
-  // Select a free physical register
-  val free_idx  = PriorityEncoder(oh_alc.asBools)
-  val free_mask = UIntToOH(free_idx) 
-
-  for (ap <- io.ap) {
-    ap.preg.valid := false.B
-    ap.preg.bits  := 0.U
-    when (ap.en && ap.areg =/= 0.U && free_idx =/= 0.U) {
-      oh_alc           := oh_alc & ~free_mask
-      map(free_idx)    := ap.areg
-      ap.preg.valid    := true.B
-      ap.preg.bits     := free_idx
-    }
-  }
-  for (rp <- io.rp) {
-    rp.preg := Mux(rp.areg === 0.U, 0.U, map(rp.areg))
-  }
-  printf("oh_alc=%x free_idx=%x free_mask=%x\n", oh_alc, free_idx, free_mask)
-  io.dbg := map
-
-}
-
 
 // Some notes about dynamic scheduling/out-of-order instruction pipelines.
 //
@@ -356,17 +255,15 @@ class RegisterMap(awidth: Int, pwidth: Int) extends Module {
 //   1. A map from architectural register names to physical register names
 //   2. A list of free physical registers
 //
-// When an instruction produces a result, we allocate a physical register, and 
-// then bind it to the associated architectural register in the map. Each of 
-// the architectural source registers is resolved into a physical register by 
-// reading from the map.
+// When an instruction produces a result, we allocate a physical register
+// to-be-written to the map when the instruction retires. Until then, the
+// physical register only represents a *microarchitecturally-visible* value
+// which may be used to satisfy some dependence. At the same time, each of the 
+// architectural source registers is resolved into a physical register 
+// representing the *architecturally-visible value* by reading from the map. 
 //
 // Physical registers are released for reuse only after their corresponding 
-// architectural register (a) has been bound to a different physical register 
-// by a younger instruction, and (b) after the younger instruction finally
-// commits its result value back to the physical register file. After this 
-// point, the association between an architectural register and a physical 
-// register is no longer valid.
+// architectural register has been re-bound to a different physical register.
 //
 // About Scheduling
 // ================
@@ -400,8 +297,36 @@ class RegisterMap(awidth: Int, pwidth: Int) extends Module {
 // Reordering Instructions
 // =======================
 //
-// TODO
+// The "meaning" of a program is a list of effects on the architectural state.
+// This is not necessarily the same as the list of effects that the DFG order 
+// may have on the microarchitectural state, since all of the utility relies 
+// on the fact that the order is *temporarily* removed in order to parallelize 
+// the associated work.
 //
+// Architectural effects are serialized by keeping track of all instructions
+// in a queue called a "reorder buffer." Only oldest instruction in the buffer
+// is allowed to update the mapping from architectural registers to physical
+// registers after it has completed execution and committed its result to the 
+// physical register file.
+//
+//   1. At dispatch, rename all source operands into physical register names 
+//      using the map. Put the instruction onto the reorder buffer, and onto
+//      another queue for instructions whose dependences are not resolved
+//      (typically called an "issue queue," or a "reservation station").
+//
+//   2. At issue, instructions "wake up" for execution when all dependences
+//      are resolved. Dependences are "resolved" when they are present in 
+//      the physical register file, or when they are held in some bypass path
+//      connected directly to an execution unit.
+//
+//   3. Sometime after an instruction completes, the result is written back
+//      to its associated physical register, and the instruction is marked
+//      as "complete" in the reorder buffer entry.
+//
+//   4. When the instruction reaches the end of the reorder buffer *and* the
+//      instruction is complete, the map is updated to bind the architectural 
+//      destination register to the physical register allocated at dispatch.
+//      Then, the reorder buffer entry is released.
 //
 // Resolving RAW dependences
 // =========================
@@ -426,156 +351,468 @@ class RegisterMap(awidth: Int, pwidth: Int) extends Module {
 // FIXME: Finish this!
 //
 
+// NOTE: Maybe smarter to use 'case class' and implicit parameters?
+// Avoids the situation where you accidentally try to redefine these?
+trait O3Params {
+  val num_areg: Int = 32
+  val num_preg: Int = 64
+  val awidth:   Int = log2Ceil(this.num_areg)
+  val pwidth:   Int = log2Ceil(this.num_preg)
+  val rob_sz:   Int = 32
+  val robwidth: Int = log2Ceil(this.rob_sz)
+}
 
-class PipelineModelO3(awidth: Int, pwidth: Int) extends Module {
+class PipelineModelO3 extends Module with O3Params {
 
+  class MicroOp extends Bundle {
+    val op   = InstType()
+    val pd   = UInt(awidth.W)
+    val ps1  = UInt(awidth.W)
+    val ps2  = UInt(awidth.W)
+    val ridx = UInt(robwidth.W)
+    val imm  = UInt(32.W)
+    def drive_defaults(): Unit = {
+      this.op   := InstType.NONE
+      this.pd   := 0.U
+      this.ps1  := 0.U
+      this.ps2  := 0.U
+      this.imm  := 0.U
+      this.ridx := 0.U
+    }
+  }
+
+  class DataPacket extends Bundle {
+    val pd   = UInt(pwidth.W)
+    val x    = UInt(32.W)
+    val y    = UInt(32.W)
+    val ridx = UInt(robwidth.W)
+    def drive_defaults(): Unit = {
+      this.pd   := 0.U
+      this.x    := 0.U
+      this.y    := 0.U
+      this.ridx := 0.U
+    }
+  }
+
+  class Result extends Bundle {
+    val pd   = UInt(pwidth.W)
+    val ridx = UInt(robwidth.W)
+    val data = UInt(32.W)
+    def drive_defaults(): Unit = {
+      this.pd   := 0.U
+      this.data := 0.U
+      this.ridx := 0.U
+    }
+  }
+
+  class RegisterFileBypassing(num_rp: Int, num_wp: Int, byp: Boolean) 
+    extends Module
+  {
+    import scala.collection.mutable.ArrayBuffer
+    val io = IO(new Bundle {
+      val dbg = Vec(num_areg, Output(UInt(32.W)))
+      val rp = Vec(num_rp, new RFReadPort(awidth))
+      val wp = Vec(num_wp, new RFWritePort(awidth))
+    })
+    val reg = Reg(Vec(num_areg, UInt(32.W)))
+    for (rp <- io.rp) {
+      rp.data := Mux(rp.addr === 0.U, 0.U, reg(rp.addr))
+      // Probably fine to fully-connect these if the port counts are low?
+      if (byp) {
+        for (wp <- io.wp) {
+          when (wp.en && wp.addr =/= 0.U && wp.addr === rp.addr) {
+            rp.data := wp.data
+          }
+        }
+      }
+
+    }
+    for (wp <- io.wp) {
+      when (wp.en && wp.addr =/= 0.U) { 
+        reg(wp.addr) := wp.data
+      }
+    }
+    io.dbg := reg
+  }
+
+  class MapReadPort extends Bundle {
+    val areg = Input(UInt(awidth.W))
+    val preg = Output(UInt(pwidth.W))
+    def drive_defaults(): Unit = {
+      this.areg := 0.U
+    }
+  }
+  class MapWritePort extends Bundle {
+    val areg = Input(UInt(awidth.W))
+    val preg = Input(UInt(pwidth.W))
+    val en   = Input(Bool())
+    def drive_defaults(): Unit = {
+      this.areg := 0.U
+      this.preg := 0.U
+      this.en   := false.B
+    }
+  }
+  class MapAllocPort extends Bundle {
+    val areg = Input(UInt(awidth.W))
+    val en   = Input(Bool())
+    val preg = Valid(UInt(pwidth.W))
+    def drive_defaults(): Unit = {
+      this.areg := 0.U
+      this.en   := false.B
+    }
+  }
+  class MapFreePort extends Bundle {
+    val preg = Input(UInt(pwidth.W))
+    val en   = Input(Bool())
+    def drive_defaults(): Unit = {
+      this.preg := 0.U
+      this.en   := false.B
+    }
+  }
+
+  // A map from architectural registers to physical registers.
+  //
+  //   (a) Read ports resolve an architectural register to a physical register
+  //   (b) Allocation ports allocate a physical register
+  //   (c) Write ports bind an architectural register to a physical register
+  //
+  class RegisterMap extends Module {
+    val io = IO(new Bundle {
+      val dbg = Vec(num_areg, Output(UInt(pwidth.W)))
+      val rp = Vec(2, new MapReadPort)
+      val ap = Vec(1, new MapAllocPort)
+      val wp = Vec(1, new MapWritePort)
+    })
+
+    val map       = Reg(Vec(num_areg, UInt(pwidth.W)))
+    val alc_init  = Cat(Fill((num_preg - 1), true.B), false.B)
+    val oh_alc    = RegInit(UInt(num_preg.W), alc_init)
+
+    // Select a free physical register.
+    // FIXME: You actually need to chain many of these together to accomodate
+    // for a variable number of allocation ports. This only works when the
+    // module has a single port!
+    val free_idx  = PriorityEncoder(oh_alc.asBools)
+    val free_mask = UIntToOH(free_idx) 
+
+    for (ap <- io.ap) {
+      ap.preg.valid := false.B
+      ap.preg.bits  := 0.U
+      when (ap.en && ap.areg =/= 0.U && free_idx =/= 0.U) {
+        oh_alc           := oh_alc & ~free_mask
+        ap.preg.valid    := true.B
+        ap.preg.bits     := free_idx
+
+        // FIXME: Are we supposed to bind a register at the start?
+        // Or does this happen after retire? 
+        map(ap.areg)     := free_idx
+      }
+    }
+    for (wp <- io.wp) {
+      when (wp.en && wp.preg =/= 0.U && wp.areg =/= 0.U) {
+        map(wp.areg) := wp.preg
+      }
+    }
+    for (rp <- io.rp) {
+      rp.preg := Mux(rp.areg === 0.U, 0.U, map(rp.areg))
+    }
+    printf("[MAP] oh_alc=%x free_idx=%x free_mask=%x\n", 
+      oh_alc, free_idx, free_mask
+    )
+    io.dbg := map
+  }
+
+  // Resolves architectural register operands into physical registers.
   class RegisterRename extends Module {
-    val map_rp  = IO(Vec(2, Flipped(new MapReadPort(awidth, pwidth))))
-    val map_ap  = IO(Vec(1, Flipped(new MapAllocPort(awidth, pwidth))))
+    val map_rp  = IO(Vec(2, Flipped(new MapReadPort)))
+    val map_ap  = IO(Vec(1, Flipped(new MapAllocPort)))
+    val rob_ap  = IO(Vec(1, Flipped(new ROBAllocPort)))
+
     val req     = IO(Flipped(Valid(new Instruction(awidth))))
-    val res     = IO(Valid(new Instruction(pwidth)))
+    val res     = IO(Valid(new MicroOp))
 
     map_ap(0).drive_defaults()
     map_rp(0).drive_defaults()
     map_rp(1).drive_defaults()
+    rob_ap(0).drive_defaults()
     res.bits.drive_defaults()
 
-    // Allocate a physical register
-    map_ap(0).en   := (req.valid && req.bits.rd =/= 0.U)
-    map_ap(0).areg := req.bits.rd
-    val alloc_ok    = map_ap(0).preg.valid
+    // FIXME: The machine should stall if all allocations aren't successful.
 
-    // Rename source architectural registers to physical registers
+    // Allocate a physical register, and a reorder buffer entry.
+    map_ap(0).en    := (req.valid && req.bits.rd =/= 0.U)
+    map_ap(0).areg  := req.bits.rd
+    val pd_alloc_ok  = map_ap(0).preg.valid
+    val pd           = map_ap(0).preg.bits
+
+    // Allocate a reorder buffer entry
+    rob_ap(0).en    := pd_alloc_ok
+    rob_ap(0).rd    := req.bits.rd
+    rob_ap(0).pd    := pd
+    val rob_alloc_ok = rob_ap(0).idx.valid
+    val rob_idx      = rob_ap(0).idx.bits
+
+    // Rename source architectural registers to physical registers.
     val is_lit = (req.bits.op === InstType.LIT)
     map_rp(0).areg := req.bits.rs1
     map_rp(1).areg := Mux(!is_lit, req.bits.rs2, 0.U)
+    val ps1         = map_rp(0).preg
+    val ps2         = map_rp(1).preg
 
-    val pd  = map_ap(0).preg.bits
-    val ps1 = map_rp(0).preg
-    val ps2 = map_rp(1).preg
-
-    res.valid := (req.valid && alloc_ok)
-    when (res.valid && alloc_ok) {
-      res.bits.op  := req.bits.op
-      res.bits.rd  := pd
-      res.bits.rs1 := ps1
-      res.bits.rs2 := ps2
-      res.bits.imm := req.bits.imm
+    res.valid := (req.valid && pd_alloc_ok && rob_alloc_ok)
+    when (req.valid && pd_alloc_ok && rob_alloc_ok) {
+      res.bits.op   := req.bits.op
+      res.bits.pd   := pd
+      res.bits.ps1  := ps1
+      res.bits.ps2  := ps2
+      res.bits.imm  := req.bits.imm
+      res.bits.ridx := rob_idx
     }
-
-    printf("[R] valid=%b alloc_ok=%b [%x,%x,%x => %x,%x,%x] imm=%x\n",
-      req.valid, alloc_ok, req.bits.rd, req.bits.rs1, req.bits.rs2, 
+    printf("[RRN] valid=%b pd_alloc_ok=%b rob_alloc_ok=%b [%x,%x,%x => %x,%x,%x] imm=%x\n",
+      req.valid, pd_alloc_ok, rob_alloc_ok, req.bits.rd, req.bits.rs1, req.bits.rs2, 
       pd, ps1, ps2, req.bits.imm,
     )
   }
 
-  class RFRead extends Module {
-    val rfrp    = IO(Vec(2, Flipped(new RFReadPort(pwidth))))
-    val bypass  = IO(Flipped(Valid(new Result(pwidth))))
+  // Reads from the physical register file (or a bypass path). 
+  class IssueUnit extends Module {
+    val rfrp    = IO(Vec(2, Flipped(new RFReadPort(awidth))))
 
-    val req     = IO(Flipped(Valid(new Instruction(pwidth))))
-    val res     = IO(Valid(new DataPacket(pwidth)))
+    val bypass  = IO(Flipped(Valid(new Result)))
+    val req     = IO(Flipped(Valid(new MicroOp)))
+    val res     = IO(Valid(new DataPacket))
 
     rfrp(0).drive_defaults()
     rfrp(1).drive_defaults()
     res.bits.drive_defaults()
-    val is_lit = (req.bits.op === InstType.LIT)
 
-    val rs1_match = ((req.bits.rs1 === bypass.bits.rd) && bypass.valid)
-    val rs2_match = ((req.bits.rs2 === bypass.bits.rd) && bypass.valid)
+    val is_lit  = (req.bits.op === InstType.LIT)
+    val ps1_byp = ((req.bits.ps1 === bypass.bits.pd) && bypass.valid)
+    val ps2_byp = ((req.bits.ps2 === bypass.bits.pd) && bypass.valid)
 
     res.valid := req.valid
     when (req.valid) {
-      rfrp(0).addr := Mux(rs1_match, 0.U, req.bits.rs1)
-      rfrp(1).addr := Mux((is_lit || rs2_match), 0.U, req.bits.rs2)
-      res.bits.rd  := req.bits.rd
-      res.bits.x   := Mux(rs1_match, bypass.bits.data, rfrp(0).data)
-      res.bits.y   := MuxCase(rfrp(1).data, Array(
+      rfrp(0).addr  := Mux(ps1_byp, 0.U, req.bits.ps1)
+      rfrp(1).addr  := Mux((is_lit || ps2_byp), 0.U, req.bits.ps2)
+      res.bits.ridx := req.bits.ridx
+      res.bits.pd   := req.bits.pd
+      res.bits.x    := Mux(ps1_byp, bypass.bits.data, rfrp(0).data)
+      res.bits.y    := MuxCase(rfrp(1).data, Array(
         (is_lit)    -> req.bits.imm,
-        (rs2_match) -> bypass.bits.data,
+        (ps2_byp)   -> bypass.bits.data,
       ))
     }
-    printf("[R] valid=%b pd=%x, ps1[%x]=%x ps2[%x]=%x imm=%x]\n",
-      req.valid, req.bits.rd, 
-      req.bits.rs1, res.bits.x,
-      req.bits.rs2, res.bits.y,
+    printf("[ISS] valid=%b pd=%x, ps1[%x]=%x ps2[%x]=%x imm=%x]\n",
+      req.valid, req.bits.pd, 
+      req.bits.ps1, res.bits.x,
+      req.bits.ps2, res.bits.y,
       req.bits.imm,
     )
-    printf("    rs1_bypass=%b rs2_bypass=%b\n", rs1_match, rs2_match)
+    printf("      ps1_bypass=%b ps2_bypass=%b\n", ps1_byp, ps2_byp)
   }
 
+  // Performs a simple operation.
   class ALU extends Module {
-    val req     = IO(Flipped(Valid(new DataPacket(pwidth))))
-    val res     = IO(Valid(new Result(pwidth)))
+    val req     = IO(Flipped(Valid(new DataPacket)))
+    val res     = IO(Valid(new Result))
     res.valid  := req.valid
     res.bits.drive_defaults()
     when (req.valid) {
       res.bits.data := (req.bits.x + req.bits.y)
-      res.bits.rd   := req.bits.rd
+      res.bits.pd   := req.bits.pd
+      res.bits.ridx := req.bits.ridx
     }
-    printf("[A] valid=%b pd=%x x=%x y=%x res=%x\n", req.valid,
-      req.bits.rd, req.bits.x, req.bits.y, res.bits.data
+    printf("[ALU] valid=%b pd=%x x=%x y=%x res=%x\n", req.valid,
+      req.bits.pd, req.bits.x, req.bits.y, res.bits.data
     )
   }
 
+  // Commits some result value to the physical register file.
   class CommitUnit extends Module {
-    val wp      = IO(Vec(1, Flipped(new RFWritePort(pwidth))))
-    val req     = IO(Flipped(Valid(new Result(pwidth))))
-    val ok      = IO(Output(Bool()))
-    ok         := req.valid
-    wp(0).drive_defaults()
+    val rfwp   = IO(Vec(1, Flipped(new RFWritePort(awidth))))
+    val req    = IO(Flipped(Valid(new Result)))
+    val rob_wp = IO(Vec(1, Flipped(new ROBWritePort)))
+    val ok     = IO(Output(Bool()))
+
+    ok := req.valid
+    rfwp(0).drive_defaults()
+    rob_wp(0).drive_defaults()
+
     when (req.valid) {
-      wp(0).addr := req.bits.rd
-      wp(0).data := req.bits.data
-      wp(0).en   := true.B
+      rfwp(0).addr     := req.bits.pd
+      rfwp(0).data     := req.bits.data
+      rfwp(0).en       := true.B
+      rob_wp(0).en     := true.B
+      rob_wp(0).idx    := req.bits.ridx
     }
-    printf("[W] valid=%b rd=%x data=%x\n", req.valid,
-      req.bits.rd, req.bits.data)
+    printf("[COM] valid=%b ridx=%x rd=%x data=%x\n", req.valid,
+      req.bits.ridx, req.bits.pd, req.bits.data)
   }
 
-  val map     = Module(new RegisterMap(awidth, pwidth))
-  val rf      = Module(new RegisterFileBypassing(pwidth, 
-                       num_rp=2, num_wp=1, byp=true))
+  class ROBEntry extends Bundle {
+    val rd   = UInt(awidth.W)
+    val pd   = UInt(pwidth.W)
+    val done = Bool()
+  }
+  object ROBEntry {
+    def apply(): ROBEntry = {
+      (new ROBEntry).Lit(
+        _.rd   -> 0.U,
+        _.pd   -> 0.U,
+        _.done -> false.B
+      )
+    }
+  }
+
+  class ROBAllocPort extends Bundle {
+    val rd  = Input(UInt(awidth.W))
+    val pd  = Input(UInt(pwidth.W))
+    val en  = Input(Bool())
+    val idx = Output(Valid(UInt(robwidth.W)))
+    def drive_defaults(): Unit = {
+      this.rd := 0.U
+      this.pd := 0.U
+      this.en := false.B
+    }
+  }
+  class ROBWritePort extends Bundle {
+    val idx = Input(UInt(robwidth.W))
+    val en  = Input(Bool())
+    def drive_defaults(): Unit = {
+      this.idx := 0.U
+      this.en  := false.B
+    }
+  }
+
+  class ReorderBuffer extends Module {
+    val io = IO(new Bundle {
+      val ap = Vec(1, new ROBAllocPort)
+      val wp = Vec(1, new ROBWritePort)
+      val rp = Vec(1, Valid(new ROBEntry))
+    })
+
+    val head = RegInit(0.U(robwidth.W))
+    val tail = RegInit(0.U(robwidth.W))
+    val data = RegInit(VecInit(Seq.fill(rob_sz)(ROBEntry())))
+    val can_alloc = ((head + 1.U) =/= tail)
+    val is_empty  = (head === tail)
+
+    io.ap(0).idx.valid := false.B
+    io.ap(0).idx.bits  := 0.U
+    io.rp(0).valid := false.B
+    io.rp(0).bits  := ROBEntry()
+
+    // Allocate a new entry
+    when (io.ap(0).en && can_alloc) {
+      io.ap(0).idx.valid := true.B
+      io.ap(0).idx.bits  := head
+      data(head).rd      := io.ap(0).rd
+      data(head).pd      := io.ap(0).pd
+      data(head).done    := false.B
+      head               := head + 1.U
+    }
+
+    // Mark an entry as complete
+    when (io.wp(0).en) {
+      data(io.wp(0).idx).done := true.B
+    }
+
+    // Release an entry
+    when (!is_empty && data(tail).done) {
+      io.rp(0).valid := true.B
+      io.rp(0).bits  := data(tail)
+      data(tail)     := ROBEntry()
+      tail           := tail + 1.U
+    }
+
+    printf("[ROB] head=%x tail=%x \n",
+      head, tail
+    )
+
+  }
+
+  // Binds a physical register to an architectural register.
+  class RetireUnit extends Module {
+    val map_wp = IO(Vec(1, Flipped(new MapWritePort)))
+    val req    = IO(Vec(1, Flipped(Valid(new ROBEntry))))
+
+    map_wp(0).drive_defaults()
+
+    when (req(0).valid) {
+      map_wp(0).en   := true.B
+      map_wp(0).areg := req(0).bits.rd
+      map_wp(0).preg := req(0).bits.pd
+    }
+
+    printf("[RCU] valid=%b rd=%x pd=%x\n", 
+      req(0).valid, req(0).bits.rd, req(0).bits.pd)
+  }
+
+  val map     = Module(new RegisterMap)
+  val rob     = Module(new ReorderBuffer)
+  val rf      = Module(new RegisterFileBypassing(num_rp=2, num_wp=1, byp=true))
+
   val rrn     = Module(new RegisterRename)
-  val rfr     = Module(new RFRead)
+  val iss     = Module(new IssueUnit)
   val alu     = Module(new ALU)
   val commit  = Module(new CommitUnit)
+  val retire  = Module(new RetireUnit)
+
+  val stall   = IO(Output(Bool()))
   val req_in  = IO(Flipped(Valid(new Instruction(awidth))))
-  val res_out = IO(Valid(new Result(pwidth)))
+  val res_out = IO(Valid(new Result))
 
-  val stage_rrn = Reg(Valid(new Instruction(pwidth)))
-  val stage_op  = Reg(Valid(new DataPacket(pwidth)))
-  val stage_res = Reg(Valid(new Result(pwidth)))
+  val stage_iss = Reg(Valid(new MicroOp))
+  val stage_alu = Reg(Valid(new DataPacket))
+  val stage_res = Reg(Valid(new Result))
 
 
-  printf("r1=%x r2=%x r3=%x r4=%x r5=%x r6=%x\n", 
+  printf("[MAP] r1=%x r2=%x r3=%x r4=%x r5=%x r6=%x\n", 
     map.io.dbg(1), map.io.dbg(2),
     map.io.dbg(3), map.io.dbg(4),
     map.io.dbg(5), map.io.dbg(6),
   )
 
-  printf("r1=%x r2=%x r3=%x r4=%x r5=%x r6=%x\n", 
+  printf("[PRF] r1=%x r2=%x r3=%x r4=%x r5=%x r6=%x\n", 
     rf.io.dbg(map.io.dbg(1)), rf.io.dbg(map.io.dbg(2)),
     rf.io.dbg(map.io.dbg(3)), rf.io.dbg(map.io.dbg(4)),
     rf.io.dbg(map.io.dbg(5)), rf.io.dbg(map.io.dbg(6)),
   )
 
-  rrn.map_ap <> map.io.ap
-  rrn.map_rp <> map.io.rp
-  rfr.rfrp   <> rf.io.rp
-  commit.wp  <> rf.io.wp
+  // Register map ports
+  map.io.ap <> rrn.map_ap    // Physical register allocation during rename
+  map.io.rp <> rrn.map_rp    // Physical register resolution during rename
+  map.io.wp <> retire.map_wp // Physical register binding during retire
 
-  stage_rrn  := rrn.res
-  stage_op   := rfr.res
+  // Reorder buffer ports
+  rob.io.ap <> rrn.rob_ap    // ROB allocation during rename
+  rob.io.wp <> commit.rob_wp // ROB entries are marked during commit
+  rob.io.rp <> retire.req    // Released ROB entries flow to retire unit
+
+  // Register file ports
+  rf.io.rp  <> iss.rfrp      // PRF read ports used at issue
+  rf.io.wp  <> commit.rfwp   // PRF write ports used at commit
+
+  stage_iss  := rrn.res
+  stage_alu  := iss.res
   stage_res  := alu.res
 
   rrn.req    := req_in
-  rfr.req    := stage_rrn
-  rfr.bypass := alu.res
-  alu.req    := stage_op
+  iss.req    := stage_iss
+  iss.bypass := alu.res
+  alu.req    := stage_alu
   commit.req := stage_res
 
   res_out    := stage_res
+  stall      := false.B
 
 }
+
+
+
+
+
+
+
+
 
