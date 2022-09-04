@@ -262,7 +262,7 @@ class RegisterMap(implicit p: Param) extends Module {
 // FIXME: May be useful to think about doing this across multiple cycles?
 // FIXME: Elaborate on preserving the original program order.
 //
-// # Overview
+// # Abstract Nonsense
 // Register renaming removes all WAR and WAW dependences, leaving only RAW
 // dependences. The result values for all in-flight instructions are only 
 // associated to a single unique storage location. 
@@ -273,7 +273,7 @@ class RegisterMap(implicit p: Param) extends Module {
 // RAW dependences. 
 //
 // Conceptually, this is a way of obviating *paths of computations that can be 
-// computed independently of one another*, making the problem more amenable to
+// completed independently of one another*, making the problem more amenable to
 // being parallelized. The underlying order depends only on the availability 
 // of values that satisfy RAW dependences.
 //
