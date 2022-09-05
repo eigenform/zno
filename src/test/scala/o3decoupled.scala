@@ -138,10 +138,8 @@ class DecodePacket(implicit p: Param) extends Bundle {
 
 // Register map read port.
 class MapReadPort(implicit p: Param) extends Bundle {
-  val rs1 = Input(UInt(p.awidth.W))
-  val rs2 = Input(UInt(p.awidth.W))
-  val ps1 = Output(UInt(p.pwidth.W))
-  val ps2 = Output(UInt(p.pwidth.W))
+  val areg = Input(UInt(p.awidth.W))
+  val preg = Output(UInt(p.pwidth.W))
 }
 
 // Register map write port.
@@ -231,19 +229,17 @@ class RegisterFreeList(implicit p: Param)
 
 // Map from architectural registers to physical registers.
 class RegisterMap(implicit p: Param) extends Module {
-  val rp  = IO(Vec(p.dec_width, new MapReadPort))
+  val rp  = IO(Vec((p.dec_width * 2), new MapReadPort))
   val wp  = IO(Vec(p.dec_width, new MapWritePort))
   val map = Reg(Vec(p.num_areg, UInt(p.pwidth.W)))
 
   // Defaults
   for (port <- rp) {
-    port.ps1 := 0.U
-    port.ps2 := 0.U
+    port.preg := 0.U
   }
   // Connect read ports
   for (port <- rp) {
-    port.ps1 := Mux(port.rs1 =/= 0.U, map(port.rs1), 0.U)
-    port.ps2 := Mux(port.rs2 =/= 0.U, map(port.rs2), 0.U)
+    port.preg := Mux(port.areg =/= 0.U, map(port.areg), 0.U)
   }
   // Connect write ports
   for (port <- wp) {
@@ -255,9 +251,9 @@ class RegisterMap(implicit p: Param) extends Module {
 
 // Register rename unit.
 //
-// FIXME: You need bypassing on the register map read/write ports in order
-//        to deal with having multiple instructions per decode packet
-//        (or drum up some other kind of solution).
+// FIXME: You need some kind of bypassing to deal with having multiple 
+// instructions in a single decode packet; have to do some matching to handle
+// dependences upfront here.
 //
 // FIXME: May be useful to think about doing this across multiple cycles?
 // FIXME: Elaborate on preserving the original program order.
@@ -279,44 +275,52 @@ class RegisterMap(implicit p: Param) extends Module {
 //
 class RegisterRename(implicit p: Param) extends Module {
   val rfl_alc = IO(Vec(p.dec_width, Flipped(new RflAllocPort)))
-  val map_rp  = IO(Vec(p.dec_width, Flipped(new MapReadPort)))
+  val map_rp  = IO(Vec((p.dec_width * 2), Flipped(new MapReadPort)))
   val map_wp  = IO(Vec(p.dec_width, Flipped(new MapWritePort)))
-  val req     = IO(Flipped(Decoupled(new DecodePacket)))
 
-  // Determine which instructions need to allocate a register result
+  val req     = IO(Flipped(Decoupled(new DecodePacket)))
+  val insts   = req.bits.inst
+
+  // The set of all source register names in this packet.
+  val src_reg = insts.map(inst => Seq(inst.rs1, inst.rs2)).flatten
+  // Set of *resolved* [physical] source register names.
+  val src_ps  = Wire(Vec(p.dec_width * 2, UInt(p.pwidth.W)))
+
+  // Bits indicating which instructions have a register result.
+  // FIXME: Right now this only depends on RD being non-zero.
   val rr_en   = Wire(Vec(p.dec_width, Bool()))
   for (i <- 0 until p.dec_width) {
-    rr_en(i) := Mux(req.bits.inst(i).rd =/= 0.U, true.B, false.B)
+    rr_en(i) := (req.bits.inst(i).rd =/= 0.U)
   }
 
-  // True when at least one instruction uses a register result
-  val need_alc = rr_en.reduce(_|_)
+  // FIXME: Is it okay to make 'ready' depend on 'valid' here?
+  //
+  // 1. Allocation is successful when the freelist is presenting us with 
+  //    enough valid free registers to cover the requested allocations
+  // 2. We need to allocate if at least one instruction has a register result
+  // 3. Rename should be stalled in cases where allocation would not succeed.
+  //    If we don't need to allocate, there's no reason to stall
 
-  // Allocation is successful when the freelist presents enough valid free
-  // registers to cover the number of requested allocations
-  val alc_ok  = (rfl_alc zip rr_en) map {
-    case (pd, rr_req) => pd.idx.valid & rr_req
+  val alc_ok    = (rfl_alc zip rr_en) map { 
+    case (pd, rr) => pd.idx.valid & rr 
   } reduce(_|_)
-
-  // Rename is stalled in cases where allocation would not succeed.
-  // If we don't need to allocate, there's no reason for us to stall.
+  val need_alc  = rr_en.reduce(_|_)
   val alc_stall = (need_alc && !alc_ok)
+  req.ready    := (!alc_stall && req.valid)
 
-  // Drive default outputs
+
+  // Allocate and bind destination registers.
+  // When an instruction in the packet uses a register result, we need to:
+  //  (a) Tell the freelist that we're consuming a register
+  //  (b) Bind 'rd' to the physical register (by writing to the map)
+
   for (i <- 0 until p.dec_width) {
     rfl_alc(i).en := false.B
-    map_rp(i).rs1 := 0.U
-    map_rp(i).rs2 := 0.U
-
     map_wp(i).en  := false.B
     map_wp(i).rd  := 0.U
     map_wp(i).pd  := 0.U
   }
 
-  // FIXME: Is it okay to make 'ready' depend on 'valid' here?
-  req.ready := (!alc_stall && req.valid)
-
-  // Allocate and bind destination registers.
   when (req.fire) {
     for (i <- 0 until p.dec_width) {
       rfl_alc(i).en := rr_en(i)
@@ -326,34 +330,132 @@ class RegisterRename(implicit p: Param) extends Module {
     }
   }
 
-  //val req_rd  = req.bits.inst map (_.rd)
-  //val req_rs1 = req.bits.inst map (_.rs1)
-  //val req_rs2 = req.bits.inst map (_.rs2)
+  // FIXME: It was hard for me to think about this, and it seems obtuse.
+  // Is there an easier/more beautiful way of doing this?
+  //
+  // Build a table of matches between register operands within the packet.
+  // For each instruction in this packet, compare the destination register
+  // to all source registers in the packet.
+  //
+  //      (Match table for 4-wide decode)
+  //    -----------+-----+-----+-----+-----+
+  //    sr_iidx    |  3  |  2  |  1  |  0  | source register instr. index
+  //    -----------+-----+-----+-----+-----+
+  //    sr_idx     | 7 6 | 5 4 | 3 2 | 1 0 | source register index
+  //    -----------+-----+-----+-----+-----+
+  //    dst_iidx 0 | ? ? | ? ? | ? ? | 0 0 | provider instr. #0
+  //    dst_iidx 1 | ? ? | ? ? | 0 0 | 0 0 | provider instr. #1
+  //    dst_iidx 2 | ? ? | 0 0 | 0 0 | 0 0 | provider instr. #2
+  //    dst_iidx 3 | 0 0 | 0 0 | 0 0 | 0 0 | provider instr. #3
+  //    -----------+-----+-----+-----+-----+
+  //
+  // An instruction can only forward its physical destination register to the 
+  // instructions that follow it in the packet, ie. the physical destination
+  // allocated for inst[1] cannot be used to resolve a dependence for inst[0].
 
-  // Resolve source registers.
+  val matches = Wire(Vec(p.dec_width, Vec(p.dec_width * 2, Bool())))
+  for (dst_iidx <- 0 until p.dec_width) {
+    matches(dst_iidx) := src_reg.zipWithIndex map {
+      case (sr,sr_idx) => { 
+        val sr_iidx = sr_idx / 2
+        if (sr_iidx <= dst_iidx) {
+          false.B
+        } 
+        else {
+          (sr === insts(dst_iidx).rd) && (sr =/= 0.U)
+        }
+      }
+    }
+  }
+
+  // For each source register reference, we need some bits that indicate 
+  // whether the physical register needs to come directly from an allocation 
+  // for a previous instruction within this packet. 
   //
-  // FIXME: 
-  // When allocated registers for an instruction are used by some other
-  // instruction in this packet, we should directly forward the physical
-  // register names instead of reading them from the map.
-  //
+  // In these cases, we cannot resolve the physical register by reading the 
+  // register map (I don't think you can just bypass from all map write ports
+  // to all map read ports - you need to deal with the order of instructions 
+  // in the packet).
+
+  class SrcByp extends Bundle {
+    // Set when this source register can be identified with the destination
+    // register from an earlier instruction in the packet.
+    val en  = Bool()
+    // The index of the provider instruction (within the packet).
+    val idx = UInt(log2Ceil(p.dec_width).W)
+  }
+
+  val byps = Wire(Vec(p.dec_width * 2, new SrcByp))
+  for (i <- 0 until p.dec_width * 2) {
+    byps(i).en  := false.B
+    byps(i).idx := 0.U
+  }
+
+  when (req.fire) {
+    for (sr_idx <- 0 until (p.dec_width * 2)) {
+
+      // Enabled when a source register matches at least one destination 
+      // register (any bit in the column is set)
+      byps(sr_idx).en  := matches.map(m => m(sr_idx)) reduce(_|_)
+
+      // Get the index (row number 'dst_iidx') of the provider instruction.
+      // The latest definition takes precedence. 
+      byps(sr_idx).idx := PriorityMux(
+        matches.map(m => m(sr_idx)).reverse,
+        (0 until p.dec_width).map(_.U).reverse
+      )
+    }
+  }
+  for (i <- 0 until p.dec_width * 2) {
+    printf("byps[%x] en=%b idx=%x\n", i.U, byps(i).en, byps(i).idx)
+  }
+
+  // Resolve the physical names for all source registers.
+
+  for (i <- 0 until (p.dec_width * 2)) {
+    map_rp(i).areg := 0.U
+    src_ps(i)      := 0.U
+  }
+
+
   when (req.fire) {
     for (i <- 0 until p.dec_width) {
+      val rs1_sr_idx = (i * 2)
+      val rs2_sr_idx = (i * 2) + 1
 
-      map_rp(i).rs1 := req.bits.inst(i).rs1
-      map_rp(i).rs2 := req.bits.inst(i).rs2
+      // Only drive the read ports when we cannot resolve the value
+      // from other providing instructions in the packet
+      map_rp(rs1_sr_idx).areg := Mux(byps(rs1_sr_idx).en, 
+        0.U, src_reg(rs1_sr_idx)
+      )
+      map_rp(rs2_sr_idx).areg := Mux(byps(rs2_sr_idx).en, 
+        0.U, src_reg(rs2_sr_idx)
+      )
+
+      // Resolve the physical register from a previous allocation,
+      // otherwise, read it from the register map
+      src_ps(rs1_sr_idx) := Mux(byps(rs1_sr_idx).en, 
+        rfl_alc(byps(rs1_sr_idx).idx).idx.bits,
+        map_rp(rs1_sr_idx).preg
+      )
+      src_ps(rs2_sr_idx) := Mux(byps(rs2_sr_idx).en, 
+        rfl_alc(byps(rs2_sr_idx).idx).idx.bits,
+        map_rp(rs2_sr_idx).preg
+      )
     }
   }
 
   for (i <- 0 until p.dec_width) {
+    val rp_rs1_idx = (i * 2)
+    val rp_rs2_idx = (i * 2) + 1
     printf("[Rename]: req[%x] pc=%x [%x,%x,%x] => [%x,%x,%x]\n",
       i.U, req.bits.pc + (i*4).U, 
       req.bits.inst(i).rd,
       req.bits.inst(i).rs1,
       req.bits.inst(i).rs2,
       rfl_alc(i).idx.bits,
-      map_rp(i).ps1,
-      map_rp(i).ps2,
+      src_ps(rp_rs1_idx),
+      src_ps(rp_rs2_idx),
     )
   }
   printf("[Rename]: alc_stall=%b\n", alc_stall)
@@ -371,7 +473,7 @@ case class Param(
   num_areg: Int = 32, // Number of architectural registers
   num_preg: Int = 64, // Number of physical registers
   rob_sz:   Int = 32, // Number of reorder buffer entries
-  dec_width:Int = 2,  // Number of instructions in a decode packet
+  dec_width:Int = 4,  // Number of instructions in a decode packet
   opq_sz:   Int = 4,  // Number of buffered decode packets
 ) {
   val robwidth: Int = log2Ceil(rob_sz)
@@ -435,14 +537,22 @@ class O3DecoupledFlowSpec extends AnyFlatSpec with ChiselScalatestTester {
         Instr(LIT, 2, 0, 0, Some(0x2)),
         Instr(ADD, 3, 1, 2, None),
         Instr(ADD, 4, 1, 3, None),
+
         Instr(ADD, 1, 2, 4, None),
+        Instr(ADD, 1, 0, 1, None),
+        Instr(ADD, 1, 0, 1, None),
+        Instr(ADD, 1, 0, 1, None),
+
+        Instr(ADD, 1, 0, 1, None),
         Instr(ADD, 1, 0, 1, None),
         Instr(NOP, 0, 0, 0, None),
         Instr(NOP, 0, 0, 0, None),
+
         Instr(NOP, 0, 0, 0, None),
         Instr(NOP, 0, 0, 0, None),
         Instr(NOP, 0, 0, 0, None),
         Instr(NOP, 0, 0, 0, None),
+
         Instr(NOP, 0, 0, 0, None),
         Instr(NOP, 0, 0, 0, None),
         Instr(NOP, 0, 0, 0, None),
@@ -463,9 +573,11 @@ class O3DecoupledFlowSpec extends AnyFlatSpec with ChiselScalatestTester {
             _.pc   -> (pc * 4).U,
             _.inst(0) -> prog(pc),
             _.inst(1) -> prog(pc+1),
+            _.inst(2) -> prog(pc+2),
+            _.inst(3) -> prog(pc+3),
           ))
           dut.req.valid.poke(true.B)
-          pc += 2
+          pc += p.dec_width
         } 
         else {
           dut.req.valid.poke(false.B)
@@ -473,6 +585,8 @@ class O3DecoupledFlowSpec extends AnyFlatSpec with ChiselScalatestTester {
             _.pc   -> 0xdeadbeefL.U,
             _.inst(0) -> Instr(),
             _.inst(1) -> Instr(),
+            _.inst(2) -> Instr(),
+            _.inst(3) -> Instr(),
           ))
         }
         clk.step()
