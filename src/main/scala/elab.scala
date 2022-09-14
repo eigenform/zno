@@ -18,6 +18,4 @@ object VerilogEmitter extends App {
 
   (new chisel3.stage.ChiselStage)
     .emitVerilog(new zno.pipeline_tests.PipelineModelO3(), emitter_args)
-
-
 }
