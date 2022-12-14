@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 goblin = "0.6.0"
-ghost-cell = "0.2.3"
 
 [[bin]]
 name = "pipelined"
+

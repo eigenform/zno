@@ -1,6 +1,5 @@
 
 
-
 pub struct Freelist<const SIZE: usize> {
     data: [bool; SIZE]
 }
