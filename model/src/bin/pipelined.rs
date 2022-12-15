@@ -46,6 +46,11 @@ pub struct DecodeOut {
     instr: Instr,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MicroOp {
+    pc: u32,
+}
+
 fn main() {
 
     let mut ram = Ram::new(0x0200_0000);
@@ -54,33 +59,37 @@ fn main() {
     let mut d = ClockedState::new("top");
     // Next fetch PC
     let r_nfpc = d.track(Register::<u32>::new_init("nfpc", entry));
-    // Instruction byte buffer
-    let q_ibb  = d.track(Queue::<FetchResp, 32>::new("ibb"));
-    // Instruction buffer
-    let pq_ibuf  = d.track(PacketQueue::<DecodeOut, 32, 8>::new("ibuf"));
+    // Instruction byte queue
+    let q_ibq  = d.track(Queue::<FetchResp, 32>::new("ibq"));
+    // Instruction queue
+    let pq_iq  = d.track(PacketQueue::<DecodeOut, 32, 8>::new("iq"));
+    // Freelist
+    let m_frl  = d.track(Freelist::<256, 8>::new());
 
 
     for cyc in 0..32 {
         println!("======== Cycle {:08x} ========", cyc);
 
         {
-            let ibb = q_ibb.borrow();
-            let ibuf = pq_ibuf.borrow(); 
-            println!("[**] IBB:  {:02}/{:02}", ibb.len(), ibb.capacity());
-            println!("[**] IBUF: {:02}/{:02}", ibuf.len(), ibuf.capacity());
+            let ibq = q_ibq.borrow();
+            let iq  = pq_iq.borrow(); 
+            let frl = m_frl.borrow(); 
+            println!("[**] IBB:  {:03}/{:03}", ibq.len(), ibq.capacity());
+            println!("[**] IBUF: {:03}/{:03}", iq.len(), iq.capacity());
+            println!("[**] FRL:  {:03}/{:03}", frl.num_free(), frl.capacity());
         }
 
         // ---------------------------------------
         // Fetch stage
         {
-            let mut ibb = q_ibb.borrow_mut();
-            let fetch_stall = ibb.is_full();
+            let mut ibq = q_ibq.borrow_mut();
+            let fetch_stall = ibq.is_full();
             if !fetch_stall {
                 let fpc = r_nfpc.borrow().output();
                 println!("[IF] Fetch from {:08x}", fpc);
                 let mut data = [0u8; 32];
                 ram.read_bytes(fpc as usize, &mut data);
-                ibb.push(FetchResp { pc: fpc, data });
+                ibq.push(FetchResp { pc: fpc, data });
                 r_nfpc.borrow_mut().assign(fpc.wrapping_add(32));
             } else {
                 println!("[IF] Stalled");
@@ -90,39 +99,60 @@ fn main() {
         // ---------------------------------------
         // Decode stage
         {
-            let mut ibuf = pq_ibuf.borrow_mut();
-            let mut ibb = q_ibb.borrow_mut();
-            let ibuf_free = ibuf.num_enq();
-            println!("[ID] ibuf_free = {}", ibuf_free);
+            let mut iq = pq_iq.borrow_mut();
+            let mut ibq = q_ibq.borrow_mut();
+            let iq_max = iq.num_enq();
+            println!("[ID] iq_max = {}", iq_max);
             let decode_stall = {
-                ibb.is_empty() ||
-                ibuf.is_full()
+                ibq.is_empty() ||
+                iq.is_full()
             };
             if !decode_stall {
-                let fr: &FetchResp = ibb.output().unwrap();
+                let fr: &FetchResp = ibq.output().unwrap();
                 let dw: [u32; 8] = unsafe { std::mem::transmute(fr.data) };
                 let mut out = Packet::<DecodeOut, 8>::new();
-                for idx in 0..ibuf_free {
+                for idx in 0..iq_max {
                     let instr_off = idx * 4;
                     let instr_pc  = fr.pc.wrapping_add(instr_off as u32);
                     let instr     = Rv32::decode(dw[idx]);
                     out[idx] = DecodeOut { pc: instr_pc, instr };
                 }
                 out.dump("decode window");
-                if ibuf_free == 8 {
-                    ibb.pop();
-                    ibuf.push(out);
-                } else if ibuf_free < 8 {
+                if iq_max == 8 {
+                    ibq.pop();
+                    iq.push(out);
+                } else if iq_max < 8 {
                     unimplemented!();
                 } else { 
                     panic!();
                 }
             } else {
-                ibuf.push(Packet::new());
+                iq.push(Packet::new());
                 println!("[ID] Stalled");
             }
         }
 
+        // ---------------------------------------
+        // Rename stage
+        {
+            let mut frl = m_frl.borrow_mut();
+            let mut iq  = pq_iq.borrow_mut();
+            let rename_stall = {
+                frl.is_full() || 
+                iq.is_empty()
+            };
+            if !rename_stall {
+                let window  = iq.output();
+                let frl_out = frl.output();
+                window.dump("rename window");
+                frl_out.dump("freelist output");
+
+
+            } else {
+                println!("[RN] Rename stall");
+            }
+        }
+ 
         d.update();
     }
 }

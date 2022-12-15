@@ -304,6 +304,18 @@ pub enum Instr {
     Illegal(u32),
 }
 impl Instr { 
+    pub fn rd(&self) -> Option<ArchReg> {
+        match self { 
+            Self::Op { rd, .. } 
+            | Self::OpImm { rd, .. }
+            | Self::Load { rd, .. }
+            | Self::Jalr { rd, .. }
+            | Self::AuiPc { rd, .. }
+            | Self::Lui { rd, .. }
+            | Self::Jal { rd, .. } => Some(*rd),
+            _ => None,
+        }
+    }
     pub fn branch_info(&self) -> BranchInfo {
         match self { 
             Self::Jalr { rd, rs1, simm } => { 

@@ -162,7 +162,7 @@ impl <T, const CAP: usize, const PSIZE: usize>
         }
         // Push new entries onto the queue
         if let Some(input) = &self.input {  
-            assert!(input.len() + self.data.len() < CAP);
+            assert!(input.len() + self.data.len() <= CAP);
             for idx in 0..input.len() { 
                 self.data.push_back(input[idx]);
             }

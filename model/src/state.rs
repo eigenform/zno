@@ -5,17 +5,12 @@
 //! [Clocked], which specifies how the internal state of an object should
 //! change at clock edges.
 //!
-//! Types implementing [Clocked] are responsible for defining a suitable
-//! interface for 
+//! Modeling Sequential Logic
+//! =========================
 //!
-//! Modeling Hardware
-//! =================
-//!
-//! The idea is to approximate the semantics of a behavioral RTL,
-//! so that it's a little bit easier to write Rust programs that *look*
-//! a little bit more like a hardware model. This is only a shallow embedding 
-//! (for a number of reasons that we won't be addressing here).
-//!
+//! The idea is to *approximate* the semantics of a behavioral RTL so that 
+//! it's a little bit easier to write Rust programs that *look* a something 
+//! like a hardware model.
 //!
 //! Examples
 //! ========
