@@ -2,6 +2,7 @@
 use std::collections::*;
 use std::fmt::Debug;
 use crate::state::*;
+use crate::prim::*;
 
 /// A FIFO queue with emulated sequential semantics.
 pub struct Queue<T, const CAP: usize> 
@@ -12,6 +13,13 @@ pub struct Queue<T, const CAP: usize>
     input: Option<T>,
     take: Option<()>,
 }
+impl <T, const CAP: usize> Storage<CAP, 1>
+    for Queue<T, CAP> 
+    where T: Copy + Default + Debug
+{
+    fn num_used(&self) -> usize { self.data.len() }
+}
+
 impl <T, const CAP: usize> Queue<T, CAP> 
     where T: Copy + Default + Debug
 {
@@ -28,12 +36,6 @@ impl <T, const CAP: usize> Queue<T, CAP>
         self.data.push_back(e);
         self.data.make_contiguous();
     }
-
-    pub fn capacity(&self) -> usize { CAP }
-    pub fn len(&self) -> usize { self.data.len() }
-    pub fn is_full(&self) -> bool { self.data.len() == CAP }
-    pub fn is_empty(&self) -> bool { self.data.is_empty() }
-    pub fn num_free(&self) -> usize { CAP - self.len() }
 
     /// Return the oldest element in the queue.
     pub fn output(&self) -> Option<&T> {

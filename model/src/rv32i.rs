@@ -247,9 +247,6 @@ impl std::fmt::Display for ArchReg {
 ///
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BranchInfo {
-    /// This instruction has no branching operation.
-    None,
-
     /// An unconditional direct branch with PC-relative addressing.
     UncondDirect { simm: i32 },
 
@@ -267,7 +264,6 @@ pub enum BranchInfo {
 
     /// An unconditional indirect procedure return. 
     Return { lr: ArchReg }
-
 }
 
 
@@ -304,6 +300,9 @@ pub enum Instr {
     Illegal(u32),
 }
 impl Instr { 
+    pub fn is_ld(&self) -> bool { matches!(self, Self::Load { .. }) }
+    pub fn is_st(&self) -> bool { matches!(self, Self::Store { .. }) }
+
     pub fn rd(&self) -> Option<ArchReg> {
         match self { 
             Self::Op { rd, .. } 
@@ -316,33 +315,34 @@ impl Instr {
             _ => None,
         }
     }
-    pub fn branch_info(&self) -> BranchInfo {
+    pub fn branch_info(&self) -> Option<BranchInfo> {
         match self { 
             Self::Jalr { rd, rs1, simm } => { 
                 match rd { 
                     // Link register unused
                     ArchReg(0) => {
                         match rs1 {
-                            // 
                             ArchReg(1) | ArchReg(5) => {
-                                BranchInfo::Return { lr: *rs1 }
+                                Some(BranchInfo::Return { lr: *rs1 })
                             },
                             ArchReg(_) => {
-                                BranchInfo::UncondIndirect { 
+                                Some(BranchInfo::UncondIndirect { 
                                     base: *rs1, simm: *simm 
-                                }
+                                })
                             },
                         }
                     },
                     ArchReg(1) | ArchReg(5) => {
                         match rs1 { 
                             ArchReg(0) => {
-                                BranchInfo::CallDirect { lr: *rd, simm: *simm }
+                                Some(BranchInfo::CallDirect { 
+                                    lr: *rd, simm: *simm 
+                                })
                             },
                             ArchReg(_) => {
-                                BranchInfo::CallIndirect {
+                                Some(BranchInfo::CallIndirect {
                                     lr: *rd, base: *rs1, simm: *simm
-                                }
+                                })
                             },
                         }
                     },
@@ -350,37 +350,27 @@ impl Instr {
                         unimplemented!("{:?}", self)
                     },
                 }
-
-                //if *rd == ArchReg(0) {
-                //    if *rs1 == ArchReg(1) || *rs1 == ArchReg(5) {
-                //        BranchInfo::Return { lr: *rs1 }
-                //    } else {
-                //        BranchInfo::UncondIndirect { base: *rs1, simm: *simm }
-                //    }
-
-                //} else if *rd == ArchReg(1) || *rd == ArchReg(5) {
-                //} else {
-                //    unimplemented!("{:?}", self);
-                //}
             },
             Self::Jal { rd, simm } => {
                 match rd {
                     // Link register unused
-                    ArchReg(0) => BranchInfo::UncondDirect { simm: *simm },
-
+                    ArchReg(0) => Some(BranchInfo::UncondDirect { 
+                        simm: *simm 
+                    }),
                     // Link register used w/ calling convention
                     ArchReg(1) | ArchReg(5) => {
-                        BranchInfo::CallDirect { lr: *rd, simm: *simm }
+                        Some(BranchInfo::CallDirect { 
+                            lr: *rd, simm: *simm 
+                        })
                     },
-
                     // TODO: How to handle other cases?
                     ArchReg(_) => unimplemented!("{:?}", self),
                 }
             },
             Self::Branch { rs1, rs2, simm, brn_op } => {
-                BranchInfo::CondDirect { simm: *simm }
+                Some(BranchInfo::CondDirect { simm: *simm })
             },
-            _ => BranchInfo::None,
+            _ => None
         }
     }
 }

@@ -14,6 +14,9 @@ use zno_model::rv32i::*;
 use zno_model::packet::*;
 use zno_model::front::*;
 use zno_model::dispatch::*;
+use zno_model::uarch::*;
+use zno_model::sched::*;
+use zno_model::prim::*;
 
 
 fn read_prog(ram: &mut Ram, filename: &'static str) -> usize { 
@@ -46,10 +49,6 @@ pub struct DecodeOut {
     instr: Instr,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct MicroOp {
-    pc: u32,
-}
 
 fn main() {
 
@@ -68,18 +67,17 @@ fn main() {
 
 
     for cyc in 0..32 {
-        println!("======== Cycle {:08x} ========", cyc);
-
         {
+            println!("======== Cycle {:08x} ========", cyc);
             let ibq = q_ibq.borrow();
             let iq  = pq_iq.borrow(); 
             let frl = m_frl.borrow(); 
-            println!("[**] IBB:  {:03}/{:03}", ibq.len(), ibq.capacity());
-            println!("[**] IBUF: {:03}/{:03}", iq.len(), iq.capacity());
+            println!("[**] IBQ:  {:03}/{:03}", ibq.num_used(), ibq.capacity());
+            println!("[**] IBUF: {:03}/{:03}", iq.num_used(), iq.capacity());
             println!("[**] FRL:  {:03}/{:03}", frl.num_free(), frl.capacity());
         }
 
-        // ---------------------------------------
+        // -------------------------------------------------------
         // Fetch stage
         {
             let mut ibq = q_ibq.borrow_mut();
@@ -96,12 +94,12 @@ fn main() {
             }
         }
 
-        // ---------------------------------------
+        // -------------------------------------------------------
         // Decode stage
         {
             let mut iq = pq_iq.borrow_mut();
             let mut ibq = q_ibq.borrow_mut();
-            let iq_max = iq.num_enq();
+            let iq_max = iq.num_in();
             println!("[ID] iq_max = {}", iq_max);
             let decode_stall = {
                 ibq.is_empty() ||
@@ -115,7 +113,7 @@ fn main() {
                     let instr_off = idx * 4;
                     let instr_pc  = fr.pc.wrapping_add(instr_off as u32);
                     let instr     = Rv32::decode(dw[idx]);
-                    out[idx] = DecodeOut { pc: instr_pc, instr };
+                    out[idx]      = DecodeOut { pc: instr_pc, instr };
                 }
                 out.dump("decode window");
                 if iq_max == 8 {
@@ -132,8 +130,8 @@ fn main() {
             }
         }
 
-        // ---------------------------------------
-        // Rename stage
+        // -------------------------------------------------------
+        // Rename stage (resource allocation)
         {
             let mut frl = m_frl.borrow_mut();
             let mut iq  = pq_iq.borrow_mut();
@@ -141,12 +139,16 @@ fn main() {
                 frl.is_full() || 
                 iq.is_empty()
             };
+
             if !rename_stall {
                 let window  = iq.output();
                 let frl_out = frl.output();
                 window.dump("rename window");
                 frl_out.dump("freelist output");
 
+                let num_preg_allocs = window.iter().enumerate()
+                    .filter(|(idx, x)| x.instr.rd().is_some())
+                    .map(|(idx, x)| idx).count();
 
             } else {
                 println!("[RN] Rename stall");

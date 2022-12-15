@@ -4,6 +4,9 @@ use std::fmt::Debug;
 use std::ops::{ Index, IndexMut };
 
 use crate::state::*;
+use crate::prim::*;
+
+
 
 #[derive(Debug)]
 pub struct Packet<T, const SIZE: usize> 
@@ -91,6 +94,14 @@ pub struct PacketQueue<T, const CAP: usize, const PSIZE: usize>
     input: Option<Packet<T, PSIZE>>,
     take: Option<usize>,
 }
+
+impl <T, const CAP: usize, const PSIZE: usize> Storage<CAP, PSIZE> 
+    for PacketQueue<T, CAP, PSIZE> 
+    where T: Copy + Default + Debug
+{
+    fn num_used(&self) -> usize { self.data.len() }
+}
+
 impl <T, const CAP: usize, const PSIZE: usize> PacketQueue<T, CAP, PSIZE> 
     where T: Copy + Default + Debug
 {
@@ -101,17 +112,6 @@ impl <T, const CAP: usize, const PSIZE: usize> PacketQueue<T, CAP, PSIZE>
             input: None,
             take: None,
         }
-    }
-
-    pub fn capacity(&self) -> usize { CAP }
-    pub fn len(&self) -> usize { self.data.len() }
-    pub fn is_full(&self) -> bool { self.data.len() == CAP }
-    pub fn is_empty(&self) -> bool { self.data.is_empty() }
-    pub fn num_free(&self) -> usize { CAP - self.len() }
-
-    pub fn num_enq(&self) -> usize { 
-        let num_free = self.num_free();
-        if num_free >= PSIZE { PSIZE } else { num_free }
     }
 
     /// Return a [Packet] with the oldest entries in the queue.
