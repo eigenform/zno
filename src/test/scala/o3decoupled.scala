@@ -14,6 +14,7 @@ import zno.common._
 // ============================================================================
 // Datatypes and bundle declarations
 
+// Stand-in for a typical "decoded instruction"
 object InstType extends ChiselEnum { val LIT, ADD, NOP, NONE = Value }
 class Instruction(implicit p: Param) extends Bundle {
   val op  = InstType()        // The type of instruction
@@ -63,7 +64,6 @@ object Instr {
       _.imm_en -> false.B,
     )
   }
-
 }
 
 // Register file read port.
@@ -92,10 +92,13 @@ class MicroOp(implicit p: Param) extends Bundle {
   val imm  = UInt(32.W)         // Immediate value
   val imm_en = Bool()           // Immediate enable
 
+  // Determine whether or not this uop has a register result
   def has_rr(): Bool = {
     this.rd =/= 0.U
   }
 
+  // Determine whether or not this uop is schedulable (must be executed).
+  // "Non-scheduable" operations are only tracked by the ROB.
   def schedulable(): Bool = {
     this.op =/= InstType.NOP
   }

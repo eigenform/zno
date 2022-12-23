@@ -1,23 +1,25 @@
 
-package zno.riscv.rf
+package zno.core.rf
 
 import chisel3._
 import chisel3.util._
 import chisel3.experimental.ChiselEnum
 
+import zno.core.uarch._
+
 // Generic register file read port
-class RFReadPort extends Bundle {
-  val addr = Input(UInt(5.W))
-  val data = Output(UInt(32.W))
+class RFReadPort(implicit p: ZnoParam) extends Bundle {
+  val addr = Input(UInt(p.pwidth.W))
+  val data = Output(UInt(p.xlen.W))
   def drive_defaults(): Unit = {
     this.addr := 0.U
   }
 }
 
 // Generic register file write port
-class RFWritePort extends Bundle {
-  val addr = Input(UInt(5.W))
-  val data = Input(UInt(32.W))
+class RFWritePort(implicit p: ZnoParam) extends Bundle {
+  val addr = Input(UInt(p.pwidth.W))
+  val data = Input(UInt(p.xlen.W))
   val en   = Input(Bool())
   def drive_defaults(): Unit = {
     this.addr := 0.U
@@ -27,7 +29,7 @@ class RFWritePort extends Bundle {
 }
 
 // NOTE: You should try to use this version if you're targeting FPGA.
-class RegisterFileBRAM extends Module {
+class RegisterFileBRAM(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle {
     val rp = Vec(2, new RFReadPort)
     val wp = Vec(3, new RFWritePort)
@@ -53,7 +55,7 @@ class RegisterFileBRAM extends Module {
 // requirements when a large multi-port register file is synthesized into a 
 // huge blob of DFF stdcells.
 
-class RegisterFileFF extends Module {
+class RegisterFileFF(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle {
     val rp = Vec(2, new RFReadPort)
     val wp = Vec(3, new RFWritePort)
