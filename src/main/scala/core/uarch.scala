@@ -27,13 +27,13 @@ case class ZnoParam(
 }
 
 // Indicates a type of execution unit used to perform an operation.
-object ExecutionUnit extends ChiselEnum {
-  val EU_ILL = Value // No execution unit (illegal instruction)
-  val EU_NOP = Value // No execution unit (explicit no-op)
-  val EU_ALU = Value // ALU instruction
-  val EU_LSU = Value // Load/store instruction
-  val EU_BCU = Value // Branch/jump/compare instruction
-}
+//object ExecutionUnit extends ChiselEnum {
+//  val EU_ILL = Value // No execution unit (illegal instruction)
+//  val EU_NOP = Value // No execution unit (explicit no-op)
+//  val EU_ALU = Value // ALU instruction
+//  val EU_LSU = Value // Load/store instruction
+//  val EU_BCU = Value // Branch/jump/compare instruction
+//}
 
 object ZnoAluOpcode extends ChiselEnum {
   val A_NOP  = Value
@@ -54,38 +54,34 @@ object ZnoAluOpcode extends ChiselEnum {
   val A_ILL  = Value
 }
 
-object ZnoLdstOpcode extends ChiselEnum {
-  val M_NOP = Value
-  val M_LB  = Value
-  val M_LH  = Value
-  val M_LW  = Value
-  val M_LBU = Value
-  val M_LHU = Value
-  val M_SB  = Value
-  val M_SH  = Value
-  val M_SW  = Value
-  val M_ILL = Value
-}
-
-object ZnoBranchOpcode extends ChiselEnum {
-  val B_NOP = Value
-  val B_BRN = Value
-  val B_JMP = Value
-}
+//object ZnoLdstOpcode extends ChiselEnum {
+//  val M_NOP = Value
+//  val M_LB  = Value
+//  val M_LH  = Value
+//  val M_LW  = Value
+//  val M_LBU = Value
+//  val M_LHU = Value
+//  val M_SB  = Value
+//  val M_SH  = Value
+//  val M_SW  = Value
+//  val M_ILL = Value
+//}
 
 object ZnoBranchCond extends ChiselEnum {
-  val EQ  = Value
-  val NEQ = Value
-  val LT  = Value
-  val LTU = Value
-  val GE  = Value
-  val GEU = Value
+  val B_NOP = Value
+  val B_EQ  = Value
+  val B_NEQ = Value
+  val B_LT  = Value
+  val B_LTU = Value
+  val B_GE  = Value
+  val B_GEU = Value
 }
 
 object ZnoLdstWidth extends ChiselEnum {
-  val W_B = Value
-  val W_H = Value
-  val W_W = Value
+  val W_NOP = Value
+  val W_B   = Value
+  val W_H   = Value
+  val W_W   = Value
 }
 
 
@@ -115,81 +111,162 @@ object ZnoLdstWidth extends ChiselEnum {
 //}
 
 
+// Describing an immediate value extracted from a RISC-V instruction.
+//
+///Immediate values from decoded instructions are either 12-bit or 20-bit. 
+// The type of instrucion encoding indicates how the immediate should be 
+// expanded into the sign-extended 32-bit value. 
+//
+// Storage for Immediate Values
+// ============================
+//
+// Immediate values occur very often in an instruction stream. 
+// This is unfortunate because the cost of moving the fully-expanded immediate 
+// bits down the pipeline (ie. within the associated micro-op) is quite high: 
+// in that situation, immediate storage is distributed all over the machine. 
+//
+// In one sense, it'd be nice to keep immediates in the physical register file
+// so that micro-ops only consist of *names* of source operands. 
+// This probably involves allocating from the PRF and writing at decode-time.
+//
+// Trivial immediate values (zero, or encodings in very few bits) occur 
+// very often in an instruction stream. The cost of tracking these can be
+// mitigated somewhat at decode-time: if an immediate value can be described
+// in at most 'log2(prf_size)' bits, then we can "inline" the bits into a
+// physical source register name instead of consuming space in the physical
+// register file. 
+//
+class RvImmData(implicit p: ZnoParam) extends Bundle {
+  val imm    = UInt(19.W)           // Immediate low bits
+  val sign   = Bool()               // Immediate high/sign bit
+  val inl    = Bool()               // Inline-able? 
+
+  def drive_defaults(): Unit = {
+    this.imm  := 0.U
+    this.sign := false.B
+    this.inl  := false.B
+  }
+}
+
 // ----------------------------------------------------------------------------
 
 
+object UopKind extends ChiselEnum {
+  val U_NOP = Value
+  val U_INT = Value
+  val U_LD  = Value
+  val U_ST  = Value
+  val U_BRN = Value
+  val U_JMP = Value
+}
 
+
+// Integer micro-op
+class IntUop(implicit p: ZnoParam) extends Bundle {
+  val alu_op  = ZnoAluOpcode()
+  val rid     = UInt(p.robwidth.W) // Reorder buffer index
+  val pd      = UInt(p.pwidth.W)   // Physical destination
+
+  val ps1     = UInt(p.pwidth.W)   // Physical source #1
+  val ps2     = UInt(p.pwidth.W)   // Physical source #2
+  val imm_inl = Bool()
+  val imm_s   = Bool()
+  val use_pc  = Bool()
+}
+
+// Load micro-op
+class LdUop(implicit p: ZnoParam) extends Bundle {
+  val accw    = ZnoLdstWidth()     // Memory access width
+  val sext    = Bool()             // 32-bit sign-extended result
+  val rid     = UInt(p.robwidth.W) // Reorder buffer index
+  val pd      = UInt(p.pwidth.W)   // Physical destination
+
+  val ps_base = UInt(p.pwidth.W)   // Physical source (address base)
+  val ps_imm  = UInt(p.pwidth.W)   // Immediate (added to ps_base)
+  val imm_inl = Bool()
+  val imm_s   = Bool()
+}
+
+// Store micro-op
 class StUop(implicit p: ZnoParam) extends Bundle {
   val accw    = ZnoLdstWidth()     // Memory access width
   val rid     = UInt(p.robwidth.W) // Reorder buffer index
+
   val ps_data = UInt(p.pwidth.W)   // Physical source (data)
   val ps_base = UInt(p.pwidth.W)   // Physical source (address base)
-  val imm     = UInt(p.xlen.W)     // Immediate (added to ps_base)
+  val ps_imm  = UInt(p.pwidth.W)   // Immediate (added to ps_base)
+  val imm_inl = Bool()
+  val imm_s   = Bool()
 }
 
-class LdUop(implicit p: ZnoParam) extends Bundle {
-  val accw    = ZnoLdstWidth()     // Memory access width
-  val rid     = UInt(p.robwidth.W) // Reorder buffer index
-  val pd      = UInt(p.pwidth.W)   // Physical destination
-  val ps_base = UInt(p.pwidth.W)   // Physical source (address base)
-  val imm     = UInt(p.xlen.W)     // Immediate (added to ps_base)
-}
-
+// Branch micro-op
 class BrnUop(implicit p: ZnoParam) extends Bundle {
   val cond    = ZnoBranchCond()    // Condition
   val rid     = UInt(p.robwidth.W) // Reorder buffer index
+
   val ps1     = UInt(p.pwidth.W)   // Physical source #1
   val ps2     = UInt(p.pwidth.W)   // Physical source #2
-  val imm     = UInt(p.xlen.W)     // Immediate (added to pc)
+  val ps_imm  = UInt(p.pwidth.W)   // Immediate (added to pc)
+  val imm_inl = Bool()
+  val imm_s   = Bool()
 }
 
+// Jump micro-op
 class JmpUop(implicit p: ZnoParam) extends Bundle {
+  val ind     = Bool()             // Indirect (use ps_base instead of pc)
   val rid     = UInt(p.robwidth.W) // Reorder buffer index
   val pd      = UInt(p.pwidth.W)   // Physical destination
-  val indir   = Bool()             // Indirect (use ps_base instead of pc)
   val ps_base = UInt(p.pwidth.W)   // Physical source (address base)
-  val imm     = UInt(p.xlen.W)     // Offset (added to either ps_base or pc)
+  val ps_imm  = UInt(p.pwidth.W)   // Offset (added to either ps_base or pc)
+  val imm_inl = Bool()
+  val imm_s   = Bool()
 }
 
 
-
+// Front-end (decode/rename) representation of a micro-op.
+//
+// The dispatch stage is responsible for transforming these signals into the
+// more compact "back-end" representation of a particular kind of micro-op
+// (see [IntUop], [LdUop], [StUop], [BrnUop], and [JmpUop] above).
+//
 class Uop(implicit p: ZnoParam) extends Bundle {
-  val brnop = ZnoBranchOpcode()    // Branch operation
-  val aluop = ZnoAluOpcode()       // Arithmetic/logic unit operation
-  val memop = ZnoLdstOpcode()      // Memory operation
+  val kind  = UopKind()           // Micro-op type
 
-  val enc   = RvEncType()          // Instruction encoding type
-  val rid   = UInt(p.robwidth.W)   // Reorder buffer index
-  val rr    = Bool()               // Register result
+  val enc   = RvEncType()         // Instruction encoding type
+  val cond  = ZnoBranchCond()     // Branch condition
+  val aluop = ZnoAluOpcode()      // Arithmetic/logic unit operation
+  val memw  = ZnoLdstWidth()      // Memory access width
+  val rr    = Bool()              // Register result
+  val jmp_ind = Bool()            // Indirect jump
+  val ld_sext = Bool()            // Sign-extend load result
 
-  val imm_s   = Bool()             // Immediate sign/high bit
-  val imm_inl = Bool()             // Immediate inlined into ps3
-
-  val rd    = UInt(p.awidth.W)     // Architectural destination
-  val rs1   = UInt(p.awidth.W)     // Architectural source #1
-  val rs2   = UInt(p.awidth.W)     // Architectural source #2
-
-  val pd    = UInt(p.pwidth.W)     // Physical destination
-  val ps1   = UInt(p.pwidth.W)     // Physical source #1
-  val ps2   = UInt(p.pwidth.W)     // Physical source #2
-  val ps3   = UInt(p.pwidth.W)     // Physical source #3
+  val rid   = UInt(p.robwidth.W)  // Reorder buffer index
+  val rd    = UInt(p.awidth.W)    // Architectural destination
+  val rs1   = UInt(p.awidth.W)    // Architectural source #1
+  val rs2   = UInt(p.awidth.W)    // Architectural source #2
+  val pd    = UInt(p.pwidth.W)    // Physical destination
+  val ps1   = UInt(p.pwidth.W)    // Physical source #1
+  val ps2   = UInt(p.pwidth.W)    // Physical source #2
+  val ps3   = UInt(p.pwidth.W)    // Physical source #3
 
   def drive_defaults(): Unit = {
-      this.aluop   := ZnoAluOpcode.A_NOP
-      this.brnop   := ZnoBranchOpcode.B_NOP
-      this.memop   := ZnoLdstOpcode.M_NOP
-      this.imm_s   := false.B
-      this.imm_inl := false.B
-      this.enc     := RvEncType.ENC_ILL
-      this.rid     := 0.U
-      this.rr      := false.B
-      this.rd      := 0.U
-      this.rs1     := 0.U
-      this.rs2     := 0.U
-      this.pd      := 0.U
-      this.ps1     := 0.U
-      this.ps2     := 0.U
-      this.ps3     := 0.U
+    this.kind    := UopKind.U_NOP
+    this.aluop   := ZnoAluOpcode.A_NOP
+    this.cond    := ZnoBranchCond.B_NOP
+    this.memw    := ZnoLdstWidth.W_NOP
+    this.rr      := false.B
+    this.jmp_ind := false.B
+    this.ld_sext := false.B
+
+    this.enc     := RvEncType.ENC_ILL
+    this.rid     := 0.U
+    this.rd      := 0.U
+    this.rs1     := 0.U
+    this.rs2     := 0.U
+    this.pd      := 0.U
+    this.ps1     := 0.U
+    this.ps2     := 0.U
+    this.ps3     := 0.U
   }
 }
 
@@ -201,6 +278,7 @@ class ZnoFetchPacket(implicit p: ZnoParam) extends Bundle {
 
 // Reorder buffer entry.
 class ROBEntry(implicit p: ZnoParam) extends Bundle {
+  val kind = UopKind()
   val rd   = UInt(p.awidth.W)
   val pd   = UInt(p.pwidth.W)
   val done = Bool()
@@ -209,14 +287,18 @@ object ROBEntry {
   // Creates an *empty* reorder buffer entry.
   def apply(implicit p: ZnoParam): ROBEntry = {
     (new ROBEntry).Lit(
+      _.kind -> UopKind.U_INT,
       _.rd   -> 0.U,
       _.pd   -> 0.U,
       _.done -> false.B
     )
   }
 
-  def apply(implicit p: ZnoParam, rd: UInt, pd: UInt, done: Bool): ROBEntry = {
+  def apply(implicit p: ZnoParam, 
+    kind: UopKind.Type, rd: UInt, pd: UInt, done: Bool
+  ): ROBEntry = {
     var res = (new ROBEntry) 
+    res.kind := kind
     res.rd   := rd
     res.pd   := pd
     res.done := done

@@ -9,10 +9,10 @@ import chisel3.experimental.BundleLiterals._
 // NOTE: [PriorityEncoder] from Chisel3 selects the least-significant bit.
 object PriorityEncoderHi {
   def apply(in: Seq[Bool]): UInt = {
-    PriorityMux(in, (in.size until 0).map(_.asUInt))
+    PriorityMux(in, (0 until in.size).reverse.map(_.asUInt))
   }
   def apply(in: Bits): UInt = {
-    apply(in.asBools.reverse)
+    apply(in.asBools)
   }
 }
 

@@ -6,6 +6,23 @@ object VerilogEmitter extends App {
   implicit val p = zno.core.uarch.ZnoParam()
   val emitter_args = Array("-td", "rtl")
 
+  println("ZNO Core parameters")
+  println("===========================")
+  println("num_areg:    " + p.num_areg)
+  println("num_preg:    " + p.num_preg)
+  println("rob_sz:      " + p.rob_sz)
+  println("id_width:    " + p.id_width)
+  println("line_bytes:  " + p.line_bytes)
+
+  println("Uop    bits: " + new zno.core.uarch.Uop().getWidth)
+  println("IntUop bits: " + new zno.core.uarch.IntUop().getWidth)
+  println("StUop  bits: " + new zno.core.uarch.StUop().getWidth)
+  println("LdUop  bits: " + new zno.core.uarch.LdUop().getWidth)
+  println("BrnUop bits: " + new zno.core.uarch.BrnUop().getWidth)
+  println("JmpUop bits: " + new zno.core.uarch.JmpUop().getWidth)
+  //println("ZnoUop bits: " + zno.core.uarch.ZnoUop.width)
+  println("===========================")
+
   //(new chisel3.stage.ChiselStage)
   //  .emitVerilog(new zno.axi_periph.simple.SimpleDeviceTop(), emitter_args)
   //(new chisel3.stage.ChiselStage)

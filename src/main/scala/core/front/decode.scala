@@ -12,6 +12,7 @@ import zno.common.bitpat._
 import zno.riscv.isa._
 import zno.core.uarch._
 import zno.core.dispatch.RflAllocPort
+import zno.core.rf.RFWritePort
 
 // [RvInst] is an intermediate set of control signals that we want to associate
 // to some [BitPat] matching each instruction. 
@@ -37,30 +38,37 @@ import zno.core.dispatch.RflAllocPort
 //
 
 class RvInst(implicit p: ZnoParam) extends Bundle with AsBitPat {
+  val kind  = UopKind()
   val enc   = RvEncType()       // The type of instruction encoding
   //val src   = SourceType()      // The set of source operands
   val rr    = Bool()            // Register result
-  val brnop = ZnoBranchOpcode() // Associated control-flow opcode
+  val ld_sext = Bool()
+  val jmp_ind = Bool()
+  val cond = ZnoBranchCond() // Associated control-flow opcode
   val aluop = ZnoAluOpcode()    // Associated ALU opcode
-  val memop = ZnoLdstOpcode()   // Associated memory opcode
+  val memw = ZnoLdstWidth()
 }
 object RvInst {
   def apply(
+    kind: UopKind.Type,
     enc: RvEncType.Type, 
-    //src: SourceType.Type,
     rr: Bool,
-    brnop: ZnoBranchOpcode.Type, 
+    ld_sext: Bool,
+    jmp_ind: Bool,
+    cond: ZnoBranchCond.Type, 
     aluop: ZnoAluOpcode.Type, 
-    memop: ZnoLdstOpcode.Type,
+    memw: ZnoLdstWidth.Type,
   ): BitPat = {
     implicit val p = ZnoParam()
     (new RvInst).Lit(
+      _.kind  -> kind,
       _.enc   -> enc,
-      //_.src   -> src, 
       _.rr    -> rr,
-      _.brnop -> brnop, 
+      _.ld_sext -> ld_sext,
+      _.jmp_ind -> jmp_ind,
+      _.cond -> cond, 
       _.aluop -> aluop, 
-      _.memop -> memop, 
+      _.memw -> memw, 
     ).to_bitpat()
   }
 }
@@ -75,64 +83,66 @@ object RvInst {
 //
 object DecoderTable {
   import Rv32iPattern._
-  import ExecutionUnit._
+
+  import UopKind._
   import RvEncType._
+
   import ZnoAluOpcode._
-  import ZnoLdstOpcode._
-  import ZnoBranchOpcode._
-  //import SourceType._
+  import ZnoLdstWidth._
+  import ZnoBranchCond._
 
   val N = false.B
   val Y = true.B
+  val X = DontCare
 
   // A map from an instruction bitpattern to a set of control signals.
   val matches = Array(
-    BEQ     -> RvInst(ENC_B, N, B_BRN, A_EQ,   M_NOP),   
-    BNE     -> RvInst(ENC_B, N, B_BRN, A_NEQ,  M_NOP),
-    BLT     -> RvInst(ENC_B, N, B_BRN, A_LT,   M_NOP),
-    BGE     -> RvInst(ENC_B, N, B_BRN, A_GE,   M_NOP),
-    BLTU    -> RvInst(ENC_B, N, B_BRN, A_LTU,  M_NOP),
-    BGEU    -> RvInst(ENC_B, N, B_BRN, A_GEU,  M_NOP),
+    BEQ     -> RvInst(U_BRN, ENC_B, N, N, N, B_EQ,  A_EQ,   W_NOP),   
+    BNE     -> RvInst(U_BRN, ENC_B, N, N, N, B_NEQ, A_NEQ,  W_NOP),
+    BLT     -> RvInst(U_BRN, ENC_B, N, N, N, B_LT,  A_LT,   W_NOP),
+    BGE     -> RvInst(U_BRN, ENC_B, N, N, N, B_GE,  A_GE,   W_NOP),
+    BLTU    -> RvInst(U_BRN, ENC_B, N, N, N, B_LTU, A_LTU,  W_NOP),
+    BGEU    -> RvInst(U_BRN, ENC_B, N, N, N, B_GEU, A_GEU,  W_NOP),
 
-    JAL     -> RvInst(ENC_J, Y, B_JMP, A_NOP,  M_NOP),
-    JALR    -> RvInst(ENC_I, Y, B_JMP, A_NOP,  M_NOP),
+    JAL     -> RvInst(U_JMP, ENC_J, Y, N, N, B_NOP, A_NOP,  W_NOP),
+    JALR    -> RvInst(U_JMP, ENC_I, Y, N, Y, B_NOP, A_NOP,  W_NOP),
 
-    LUI     -> RvInst(ENC_U, Y, B_NOP, A_ADD,  M_NOP),
-    AUIPC   -> RvInst(ENC_U, Y, B_NOP, A_ADD,  M_NOP),
+    LUI     -> RvInst(U_INT, ENC_U, Y, N, N, B_NOP, A_ADD,  W_NOP),
+    AUIPC   -> RvInst(U_INT, ENC_U, Y, N, N, B_NOP, A_ADD,  W_NOP),
 
-    ADDI    -> RvInst(ENC_I, Y, B_NOP, A_ADD,  M_NOP),
-    SLTI    -> RvInst(ENC_I, Y, B_NOP, A_LT,  M_NOP),
-    SLTIU   -> RvInst(ENC_I, Y, B_NOP, A_LTU, M_NOP),
-    XORI    -> RvInst(ENC_I, Y, B_NOP, A_XOR,  M_NOP),
-    ORI     -> RvInst(ENC_I, Y, B_NOP, A_OR,   M_NOP),
-    ANDI    -> RvInst(ENC_I, Y, B_NOP, A_AND,  M_NOP),
+    ADDI    -> RvInst(U_INT, ENC_I, Y, N, N, B_NOP, A_ADD,  W_NOP),
+    SLTI    -> RvInst(U_INT, ENC_I, Y, N, N, B_NOP, A_LT,   W_NOP),
+    SLTIU   -> RvInst(U_INT, ENC_I, Y, N, N, B_NOP, A_LTU,  W_NOP),
+    XORI    -> RvInst(U_INT, ENC_I, Y, N, N, B_NOP, A_XOR,  W_NOP),
+    ORI     -> RvInst(U_INT, ENC_I, Y, N, N, B_NOP, A_OR,   W_NOP),
+    ANDI    -> RvInst(U_INT, ENC_I, Y, N, N, B_NOP, A_AND,  W_NOP),
 
-    ADD     -> RvInst(ENC_R, Y, B_NOP, A_ADD,  M_NOP),
-    SUB     -> RvInst(ENC_R, Y, B_NOP, A_SUB,  M_NOP),
-    SLL     -> RvInst(ENC_R, Y, B_NOP, A_SLL,  M_NOP),
-    SLT     -> RvInst(ENC_R, Y, B_NOP, A_LT,  M_NOP),
-    SLTU    -> RvInst(ENC_R, Y, B_NOP, A_LTU, M_NOP),
-    XOR     -> RvInst(ENC_R, Y, B_NOP, A_XOR,  M_NOP),
-    SRL     -> RvInst(ENC_R, Y, B_NOP, A_SRL,  M_NOP),
-    SRA     -> RvInst(ENC_R, Y, B_NOP, A_SRA,  M_NOP),
-    OR      -> RvInst(ENC_R, Y, B_NOP, A_OR,   M_NOP),
-    AND     -> RvInst(ENC_R, Y, B_NOP, A_AND,  M_NOP),
+    ADD     -> RvInst(U_INT, ENC_R, Y, N, N, B_NOP, A_ADD,  W_NOP),
+    SUB     -> RvInst(U_INT, ENC_R, Y, N, N, B_NOP, A_SUB,  W_NOP),
+    SLL     -> RvInst(U_INT, ENC_R, Y, N, N, B_NOP, A_SLL,  W_NOP),
+    SLT     -> RvInst(U_INT, ENC_R, Y, N, N, B_NOP, A_LT,   W_NOP),
+    SLTU    -> RvInst(U_INT, ENC_R, Y, N, N, B_NOP, A_LTU,  W_NOP),
+    XOR     -> RvInst(U_INT, ENC_R, Y, N, N, B_NOP, A_XOR,  W_NOP),
+    SRL     -> RvInst(U_INT, ENC_R, Y, N, N, B_NOP, A_SRL,  W_NOP),
+    SRA     -> RvInst(U_INT, ENC_R, Y, N, N, B_NOP, A_SRA,  W_NOP),
+    OR      -> RvInst(U_INT, ENC_R, Y, N, N, B_NOP, A_OR,   W_NOP),
+    AND     -> RvInst(U_INT, ENC_R, Y, N, N, B_NOP, A_AND,  W_NOP),
 
-    LB      -> RvInst(ENC_I, Y, B_NOP, A_ADD,  M_LB),
-    LH      -> RvInst(ENC_I, Y, B_NOP, A_ADD,  M_LH),
-    LW      -> RvInst(ENC_I, Y, B_NOP, A_ADD,  M_LW),
-    LBU     -> RvInst(ENC_I, Y, B_NOP, A_ADD,  M_LBU),
-    LHU     -> RvInst(ENC_I, Y, B_NOP, A_ADD,  M_LHU),
+    LB      -> RvInst(U_LD,  ENC_I, Y, Y, N, B_NOP, A_ADD,  W_B),
+    LH      -> RvInst(U_LD,  ENC_I, Y, Y, N, B_NOP, A_ADD,  W_H),
+    LW      -> RvInst(U_LD,  ENC_I, Y, N, N, B_NOP, A_ADD,  W_W),
+    LBU     -> RvInst(U_LD,  ENC_I, Y, N, N, B_NOP, A_ADD,  W_B),
+    LHU     -> RvInst(U_LD,  ENC_I, Y, N, N, B_NOP, A_ADD,  W_H),
 
-    SB      -> RvInst(ENC_S, N, B_NOP, A_ADD,  M_SB),
-    SH      -> RvInst(ENC_S, N, B_NOP, A_ADD,  M_SH),
-    SW      -> RvInst(ENC_S, N, B_NOP, A_ADD,  M_SW),
+    SB      -> RvInst(U_ST,  ENC_S, N, N, N, B_NOP, A_ADD,  W_B),
+    SH      -> RvInst(U_ST,  ENC_S, N, N, N, B_NOP, A_ADD,  W_H),
+    SW      -> RvInst(U_ST,  ENC_S, N, N, N, B_NOP, A_ADD,  W_W),
   )
 
   // The default set of control signals for instructions that do not match
   // any of the related bitpatterns.
   val default = {
-        RvInst(ENC_ILL, N, B_NOP, A_NOP, M_NOP)
+        RvInst(U_NOP, ENC_ILL, N, N, N, B_NOP, A_NOP, W_NOP)
   }
 
   // Generate a decoder that maps an instruction to some [[RvInst]].
@@ -154,34 +164,25 @@ object DecoderTable {
   }
 }
 
-// Describing an immediate value extracted from a RISC-V instruction.
-//
-///Immediate values from decoded instructions are either 12-bit or 20-bit. 
-// The type of instrucion encoding indicates how the immediate should be 
-// expanded into the sign-extended 32-bit value. 
-//
-// Storage for Immediate Values
-// ============================
-//
-// Immediate values occur very often in an instruction stream. 
-// This is unfortunate because the cost of moving the fully-expanded immediate 
-// bits down the pipeline (ie. within the associated micro-op) is quite high: 
-// in that situation, immediate storage is distributed all over the machine. 
-//
-// In one sense, it'd be nice to keep immediates in the physical register file
-// so that micro-ops only consist of *names* of source operands. 
-// This probably involves allocating from the PRF and writing at decode-time.
-//
-// Trivial immediate values (zero, or encodings in very few bits) occur 
-// very often in an instruction stream. The cost of tracking these can be
-// mitigated somewhat at decode-time: if an immediate value can be described
-// in at most 'log2(prf_size)' bits, then we can "inline" the bits into a
-// physical source register name instead of consuming space in the physical
-// register file. 
-//
-class RvImmData(implicit p: ZnoParam) extends Bundle {
-  val imm    = UInt(19.W) // Immediate low bits
-  val sign   = Bool()     // Immediate high/sign bit
+// Generate the full sign-extended 32-bit value of some immediate. 
+class ImmediateGenerator(implicit p: ZnoParam) extends Module {
+  import RvEncType._
+  val io = IO(new Bundle {
+    val enc  = Input(RvEncType())     // Type of instruction encoding
+    val data = Input(new RvImmData)   // Input immediate data
+    val out  = Output(UInt(p.xlen.W)) // Output immediate data
+  })
+
+  val enc  = io.enc
+  val sign = io.data.sign
+  val imm  = io.data.imm
+  io.out  := MuxCase(0.U, Seq(
+    (enc === ENC_I) -> Cat(Fill(21, sign), imm(10, 0)),
+    (enc === ENC_S) -> Cat(Fill(21, sign), imm(10, 0)),
+    (enc === ENC_B) -> Cat(Fill(20, sign), imm(10, 0), 0.U(1.W)),
+    (enc === ENC_U) -> Cat(sign, imm, Fill(12, 0.U)),
+    (enc === ENC_J) -> Cat(Fill(12, sign), imm, 0.U(1.W)),
+  ))
 }
 
 // Extracts an immediate value from a single 32-bit RISC-V instruction.
@@ -194,44 +195,24 @@ class ImmediateDecoder(implicit p: ZnoParam) extends Module {
   })
   val inst = io.inst
   val enc  = io.enc
-  //val enc  = IO(Input(RvEncType()))
-  //val inst = IO(Input(UInt(p.xlen.W)))
-  //val out  = IO(Output(Valid(new RvImmData)))
 
-  val imm  = MuxCase(0.U, Seq(
-    (enc === ENC_I) -> Cat(Fill(9, 0.U), inst(30, 20)),
-    (enc === ENC_S) -> Cat(Fill(9, 0.U), inst(30, 25), inst(11, 7)),
-    (enc === ENC_B) -> Cat(Fill(9, 0.U), inst(7), inst(30, 25), inst(11, 8)),
-    (enc === ENC_U) -> inst(30, 12),
-    (enc === ENC_J) -> Cat(inst(19, 12), inst(20), inst(30, 21)),
+  val imm_i = Cat(Fill(9, 0.U), inst(30, 20))
+  val imm_s = Cat(Fill(9, 0.U), inst(30, 25), inst(11, 7))
+  val imm_b = Cat(Fill(9, 0.U), inst(7), inst(30, 25), inst(11, 8))
+  val imm_u = inst(30, 12)
+  val imm_j = Cat(inst(19, 12), inst(20), inst(30, 21))
+  val imm   = MuxCase(0.U, Seq(
+    (enc === ENC_I) -> imm_i,
+    (enc === ENC_S) -> imm_s,
+    (enc === ENC_B) -> imm_b,
+    (enc === ENC_U) -> imm_u,
+    (enc === ENC_J) -> imm_j,
   ))
-  io.out.valid     := (enc =/= ENC_R) && (enc =/= ENC_ILL)
+  val len = PriorityEncoderHi(imm)
+  io.out.valid     := (enc =/= ENC_ILL && enc =/= ENC_R)
   io.out.bits.sign := inst(31)
   io.out.bits.imm  := imm
-}
-
-
-// Generate the full sign-extended 32-bit value of some immediate. 
-class ImmediateGenerator(implicit p: ZnoParam) extends Module {
-  import RvEncType._
-  val io = IO(new Bundle {
-    val enc  = Input(RvEncType())          // Type of instruction encoding
-    val data = Input(Valid(new RvImmData)) // Immediate data
-    val out  = Output(Valid(UInt(p.xlen.W)))
-  })
-
-  val res  = WireDefault(0.U(p.xlen.W))
-  val enc  = io.enc
-  val sign = io.data.bits.sign
-  val imm  = io.data.bits.imm
-  io.out.valid := io.data.valid
-  io.out.bits  := MuxCase(0.U, Seq(
-    (enc === ENC_I) -> Cat(Fill(21, sign), imm(10, 0)),
-    (enc === ENC_S) -> Cat(Fill(21, sign), imm(10, 0)),
-    (enc === ENC_B) -> Cat(Fill(20, sign), imm(10, 0), 0.U(1.W)),
-    (enc === ENC_U) -> Cat(sign, imm, Fill(12, 0.U)),
-    (enc === ENC_J) -> Cat(Fill(12, sign), imm, 0.U(1.W)),
-  ))
+  io.out.bits.inl  := (len <= p.pwidth.U)
 }
 
 
@@ -239,43 +220,88 @@ class ImmediateGenerator(implicit p: ZnoParam) extends Module {
 // Transform a 32-bit RISC-V instruction encoding into a ZNO micro-op.
 class ZnoUopDecoder(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle {
-    val data = Input(UInt(p.xlen.W))
-    val uop  = Output(new Uop)
+    val alc_rr  = Flipped(new RflAllocPort)
+    val alc_imm = Flipped(new RflAllocPort)
+    val rfwp    = Flipped(new RFWritePort) 
+    val data    = Input(UInt(p.xlen.W))
+    val uop     = Output(new Uop)
   })
-  io.uop.drive_defaults()
 
   val inst   = DecoderTable.generate_decoder(io.data)
+  val immdec = Module(new ImmediateDecoder)
+  val immgen = Module(new ImmediateGenerator)
+  immdec.io.enc  := inst.enc
+  immdec.io.inst := io.data
 
-  //val immdec = Module(new ImmediateDecoder)
-  //val immgen = Module(new ImmediateGenerator)
-  //immdec.io.enc  := inst.enc
-  //immdec.io.inst := io.data
-  //val immlen  = PriorityEncoderHi(immdec.io.out.bits.imm)
-  //val imm_inl = (immlen <= p.pwidth.U)
+  val has_imm     = immdec.io.out.valid
+
+  immgen.io.enc  := inst.enc
+  immgen.io.data := immdec.io.out.bits
+
 
   val rd        = io.data(11, 7)
   val rs1       = io.data(19, 15)
   val rs2       = io.data(24, 20)
   val rr        = (inst.rr) && (rd =/= 0.U)
 
-  io.uop.rid     := 0.U
-  io.uop.rr      := rr
+  // Allocate a physical register for a register result
+  io.uop.pd      := Mux(rr, io.alc_rr.idx.bits, 0.U)
+  io.alc_rr.en   := rr
+
+  // If an immediate can be inlined, drive it into ps3.
+  // Otherwise, allocate a physical register.
+  val inl_bits    = immdec.io.out.bits.imm(p.pwidth, 0)
+  io.alc_imm.en  := !immdec.io.out.bits.inl
+  io.uop.ps3     := Mux(immdec.io.out.bits.inl, inl_bits, io.alc_imm.idx.bits)
+
+  // Write a non-inlined immediate to the physical register file
+  io.rfwp.en     := !immdec.io.out.bits.inl
+  io.rfwp.addr   := io.alc_imm.idx.bits
+  io.rfwp.data   := immgen.io.out
+
+  io.uop.kind    := inst.kind
+  io.uop.enc     := inst.enc
   io.uop.aluop   := inst.aluop
-  io.uop.brnop   := inst.brnop
-  io.uop.memop   := inst.memop
+  io.uop.cond    := inst.cond
+  io.uop.memw    := inst.memw
+  io.uop.rr      := rr
+  io.uop.ld_sext := inst.ld_sext
+  io.uop.jmp_ind := inst.jmp_ind
+
+  io.uop.rid     := 0.U
   io.uop.rd      := rd
   io.uop.rs1     := rs1
   io.uop.rs2     := rs2
-  io.uop.pd      := 0.U
   io.uop.ps1     := 0.U
   io.uop.ps2     := 0.U
-  io.uop.ps3     := 0.U
+
 }
 
 
+// Top-level decode stage logic.
+//
+//
+// Handling Immediate Values
+// =========================
+//
+// You'd *like* immediates to live in the PRF if they need to, but the
+// physical registers allocated for immediates will never be reused! 
+// When the instruction window is full of operations with immediates which
+// cannot be inlined, you're creating lots of pressure on the PRF.
+//
+// You might consider a dedicated immediate register file, but how do you
+// deal with addressing? I guess you could use the reorder buffer index, 
+// and have a register file that covers the size of the instruction window?
+// (But in that case, you'll want to do all of this after ROB allocation
+// instead of during the decode stage).
+//
 class DecodeStage(implicit p: ZnoParam) extends Module {
-  val req = IO(Input(Vec(p.id_width, UInt(p.xlen.W))))
-  val res = IO(new FIFOProducerIO(new Uop, p.id_width))
+  val req  = IO(Input(Vec(p.id_width, UInt(p.xlen.W))))
+  val res  = IO(new FIFOProducerIO(new Uop, p.id_width))
+
+  val alc_rr  = IO(Flipped(Vec(p.id_width, new RflAllocPort)))
+  val alc_imm = IO(Flipped(Vec(p.id_width, new RflAllocPort)))
+  val rfwp    = IO(Flipped(Vec(p.id_width, new RFWritePort)))
 
   // Output defaults
   for (idx <- 0 until p.id_width) {
@@ -288,23 +314,21 @@ class DecodeStage(implicit p: ZnoParam) extends Module {
   val uop  = Wire(Vec(p.id_width, new Uop))
 
   // Instantiate decoders
-  val decoder = Seq.fill(p.id_width)(Module(new ZnoUopDecoder))
+  val uopdec = Seq.fill(p.id_width)(Module(new ZnoUopDecoder))
   for (idx <- 0 until p.id_width) {
-    decoder(idx).io.data := req(idx)
-    uop(idx) := decoder(idx).io.uop
+    uopdec(idx).io.alc_rr  <> alc_rr(idx)
+    uopdec(idx).io.alc_imm <> alc_imm(idx)
+    uopdec(idx).io.rfwp    <> rfwp(idx)
+    uopdec(idx).io.data := req(idx)
+
+    uop(idx) := uopdec(idx).io.uop
+    res.data(idx) := uop(idx)
   }
 
 
   res.len := p.id_width.U
 
+
 }
-
-
-
-
-
-
-
-
 
 
