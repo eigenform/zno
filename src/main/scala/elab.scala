@@ -12,7 +12,7 @@ object VerilogEmitter extends App {
   println("num_preg:    " + p.num_preg)
   println("rob_sz:      " + p.rob_sz)
   println("id_width:    " + p.id_width)
-  println("line_bytes:  " + p.line_bytes)
+  println("fetch_bytes: " + p.fetch_bytes)
 
   println("Uop    bits: " + new zno.core.uarch.Uop().getWidth)
   println("IntUop bits: " + new zno.core.uarch.IntUop().getWidth)
@@ -20,6 +20,8 @@ object VerilogEmitter extends App {
   println("LdUop  bits: " + new zno.core.uarch.LdUop().getWidth)
   println("BrnUop bits: " + new zno.core.uarch.BrnUop().getWidth)
   println("JmpUop bits: " + new zno.core.uarch.JmpUop().getWidth)
+  println("UopCtl bits: " + new zno.core.front.decode.UopCtl().getWidth)
+
   //println("ZnoUop bits: " + zno.core.uarch.ZnoUop.width)
   println("===========================")
 
@@ -40,9 +42,19 @@ object VerilogEmitter extends App {
  
   //(new chisel3.stage.ChiselStage)
   //  .emitVerilog(new zno.core.dispatch.DispatchStage(), emitter_args)
+ 
+  //(new chisel3.stage.ChiselStage)
+  //  .emitVerilog(new zno.core.front.decode.UopDecoder(), emitter_args)
+
+  //(new chisel3.stage.ChiselStage)
+  //  .emitVerilog(new zno.core.front.decode.DecodeStage(), emitter_args)
 
   (new chisel3.stage.ChiselStage)
-    .emitVerilog(new zno.core.front.decode.DecodeStage(), emitter_args)
+    .emitVerilog(new zno.core.ZnoCore(), emitter_args)
+
+  //(new chisel3.stage.ChiselStage)
+  //  .emitVerilog(new zno.core.front.fetch.FetchUnit(), emitter_args)
+
 
 
 
