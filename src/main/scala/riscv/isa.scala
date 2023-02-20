@@ -16,6 +16,19 @@ object RvEncType extends ChiselEnum {
 }
 
 // RISC-V instruction opcodes.
+//
+// NOTE: For RV32I, the following opcodes are valid: 
+//  - 00000 (LOAD)
+//  - 00011 (MISC_MEM)
+//  - 00100 (OP_IMM)
+//  - 00101 (AUIPIC)
+//  - 01000 (STORE)
+//  - 01100 (OP)
+//  - 01101 (LUI)
+//  - 11000 (BRANCH)
+//  - 11001 (JALR)
+//  - 11011 (JAL)
+//
 object RvOpcode extends ChiselEnum {
   // I: [lb,lh,lw,lbu,lhu]
   val LOAD       = Value("b00000".U) 

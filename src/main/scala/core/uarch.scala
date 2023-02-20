@@ -10,17 +10,25 @@ import zno.riscv.isa._
 // Variables used to parameterize different aspects of the ZNO core. 
 case class ZnoParam(
   xlen:     Int = 32, // Register width (in bits)
-  num_areg: Int = 32, // Number of architectural registers
-  num_preg: Int = 64, // Number of physical registers
-  rob_sz:   Int = 32, // Number of reorder buffer entries
-  sch_sz:   Int = 8,  // Number of scheduler/reservation entries
-  fbq_sz:   Int = 4,  // Number of buffered fetch blocks between front/back
-  opq_sz:   Int = 32, // Number of buffered instrs between decode and dispatch
-  id_width: Int = 4,  // Number of instructions in a decode packet
-) {
-  val fetch_bytes: Int = 32               // Bytes in a fetch packet
-  val fetch_words: Int = fetch_bytes / 4  // 32-bit words in a fetch packet
+  num_areg: Int = 32, // Architectural Register File size
+  num_preg: Int = 64, // Physical Register File size
 
+  rob_sz:   Int = 32, // Reorder Buffer size
+  sch_sz:   Int = 8,  // Scheduler Queue size
+
+  fbq_sz:   Int = 4,  // Fetch Block Queue size
+  ftq_sz:   Int = 4,  // Fetch Target Queue size
+  cfm_sz:   Int = 8,  // Control-flow Map size
+
+  opq_sz:   Int = 32, // Micro-op Queue size
+  id_width: Int = 8,  // Decode window size
+) {
+  val fetch_bytes: Int = 32               // Bytes in a fetch block
+  val fetch_words: Int = fetch_bytes / 4  // 32-bit words in a fetch block
+
+  // Number of bits sufficient for representing a fetch block address
+  // (addresses aligned to 'fetch_bytes')
+  val cfm_tag_width: Int = xlen - log2Ceil(fetch_bytes)
 
   val robwidth: Int = log2Ceil(rob_sz)   // Reorder buffer index width
   val awidth:   Int = log2Ceil(num_areg) // Architectural register index width
@@ -314,26 +322,6 @@ class Uop(implicit p: ZnoParam) extends Bundle {
   }
 }
 
-// ----------------------------------------------------------------------------
-// Front-end definitions
-
-class ZnoFetchIO(implicit p: ZnoParam) extends Bundle {
-  val req  = Decoupled(UInt(p.xlen.W))
-  val resp = Flipped(Valid(new FbqEntry))
-}
-
-// Entry in a "fetch block queue" 
-class FbqEntry(implicit p: ZnoParam) extends Bundle {
-  // The address of this block
-  val addr = UInt(p.xlen.W)
-  // Fetched bytes in this block
-  val data = Vec(p.fetch_words, UInt(p.xlen.W))
-
-  def drive_defaults(): Unit = {
-    this.addr := 0.U
-    this.data := 0.U.asTypeOf(Vec(p.fetch_words, UInt(p.xlen.W)))
-  }
-}
 
 // ----------------------------------------------------------------------------
 // Dispatch / in-order resources

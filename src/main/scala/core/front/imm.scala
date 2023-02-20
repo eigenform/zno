@@ -11,7 +11,7 @@ import zno.common._
 import zno.common.bitpat._
 import zno.riscv.isa._
 import zno.core.uarch._
-import zno.core.dispatch.RflAllocPort
+import zno.core.mid.dispatch.RflAllocPort
 import zno.core.rf.RFWritePort
 
 // Generate the full sign-extended 32-bit value of some immediate. 

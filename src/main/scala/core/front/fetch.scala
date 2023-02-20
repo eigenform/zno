@@ -10,43 +10,46 @@ import chisel3.util.experimental.decode
 import zno.common._
 import zno.riscv.isa._
 import zno.core.uarch._
+import zno.core.front._
 
-
+// Instruction fetch unit. 
 class FetchUnit(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle {
     // Connection to some instruction memory
-    val ibus = new ZnoFetchIO
-    // Branch target for redirecting instruction fetch
-    val brn_tgt = Flipped(Valid(UInt(p.xlen.W)))
+    val ibus = new ZnoInstBusIO
+    // Input fetch target
+    val tgt = Flipped(Decoupled(new FetchTarget))
     // Output fetch block
-    val fbq_enq = Decoupled(new FbqEntry)
+    val fblk = Valid(new FetchBlock)
   })
 
-  // The current fetch PC 
-  val pc = RegInit(0x00000000.U(p.xlen.W))
+  io.fblk.bits.drive_defaults()
 
-  // Transactions with the bus only begin when we determine that the FBQ 
-  // is able to accept a new entry 
-  val fbq_ready  = RegNext(io.fbq_enq.ready)
-  val ibus_ready = RegNext(io.ibus.req.ready)
+  val pending = RegInit(false.B)
 
-  io.ibus.req.valid := (fbq_ready && ibus_ready)
-  io.ibus.req.bits := 0.U
-  when (io.ibus.req.fire) {
-    io.ibus.req.bits := pc
+  val tmp = WireDefault(0.U.asTypeOf(new FetchTarget))
+  tmp.addr := io.tgt.bits.addr
+  val tgt = RegEnable(tmp, io.tgt.fire)
+
+  // Cycle 0 
+  // We're ready to accept a new fetch target when:
+  //  - The instruction bus is guaranteed to be ready
+  //  - We aren't already in the middle of a transaction
+  io.tgt.ready := (!pending && io.ibus.req.ready)
+  when (io.tgt.fire) {
+    pending := true.B
+    tgt     := io.tgt.bits
   }
 
-  // Transactions are complete when the bus signals 'valid'.
-  // When a transaction is completed, send the result to the FBQ
-  // and capture the value of the next fetch PC.
-  io.fbq_enq.valid := io.ibus.resp.valid
-  io.fbq_enq.bits.drive_defaults()
-  when (io.ibus.resp.valid) {
-    io.fbq_enq.bits  := io.ibus.resp.bits
-    pc := Mux(io.brn_tgt.valid, 
-      io.brn_tgt.bits, 
-      (pc + p.fetch_bytes.U)
-    )
+  // Cycle 1 - N
+  // Wait for the instruction bus to complete the transaction.
+  io.ibus.req.valid := pending
+  io.ibus.req.bits  := Mux(io.ibus.req.fire, tgt.addr, 0.U)
+
+  val done = (pending && io.ibus.resp.valid)
+  when (done) {
+    pending := false.B
+    io.fblk := io.ibus.resp
   }
 
 }

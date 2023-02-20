@@ -11,9 +11,6 @@ import zno.common._
 import zno.common.bitpat._
 import zno.riscv.isa._
 import zno.core.uarch._
-import zno.core.front.decode.imm._
-import zno.core.dispatch.RflAllocPort
-import zno.core.rf.RFWritePort
 
 // Decode stage logic.
 //
@@ -282,47 +279,6 @@ object DecoderTable {
 //  io.uop.ps3     := 0.U
 //
 //}
-
-// Extracts an immediate value from a single 32-bit RISC-V instruction.
-class ImmediateDecoder(implicit p: ZnoParam) extends Module {
-  import ImmFmt._
-  val io   = IO(new Bundle {
-    val ifmt = Input(ImmFmt())
-    val inst = Input(UInt(p.xlen.W))
-    val out  = Output(new RvImmData)
-    val ctl  = Output(UopImmCtl())
-    val sign = Output(Bool())
-    val imm  = Output(UInt(19.W))
-  })
-  val inst = io.inst
-
-  val imm_i = Cat(Fill(9, 0.U), inst(30, 20))
-  val imm_s = Cat(Fill(9, 0.U), inst(30, 25), inst(11, 7))
-  val imm_b = Cat(Fill(9, 0.U), inst(7), inst(30, 25), inst(11, 8))
-  val imm_u = inst(30, 12)
-  val imm_j = Cat(inst(19, 12), inst(20), inst(30, 21))
-  val imm   = MuxCase(0.U, Seq(
-    (io.ifmt === F_I) -> imm_i,
-    (io.ifmt === F_S) -> imm_s,
-    (io.ifmt === F_B) -> imm_b,
-    (io.ifmt === F_U) -> imm_u,
-    (io.ifmt === F_J) -> imm_j,
-  ))
-
-  val is_zero = (imm === 0.U)
-  val valid   = (io.ifmt =/= F_NA)
-
-  val len     = Mux(is_zero, 0.U, PriorityEncoderHi(imm))
-  val can_inl = (len <= p.pwidth.U)
-
-  io.out.ctl := MuxCase(UopImmCtl.NONE, Seq(
-    (valid && is_zero)              -> UopImmCtl.ZERO,
-    (valid && !is_zero && can_inl)  -> UopImmCtl.INL,
-    (valid && !is_zero && !can_inl) -> UopImmCtl.ALC,
-  ))
-  io.out.sign := inst(31)
-  io.out.imm  := imm
-}
 
 
 object MovCtl extends ChiselEnum {

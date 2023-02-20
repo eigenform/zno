@@ -1,5 +1,5 @@
 
-package zno.core.dispatch
+package zno.core.mid.dispatch
 
 import chisel3._
 import chisel3.util._
