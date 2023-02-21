@@ -14,6 +14,35 @@ import zno.core.front._
 import zno.core.uarch._
 import zno.common._
 
+// Simple container for RISC-V stimulus (this sucks, lol)
+class SimROM(file: String) {
+  import java.nio.file.{Files, Paths}
+
+  val data = Files.readAllBytes(Paths.get(file))
+  if (data.length % 4 != 0) {
+    throw new Exception("ROM length must be a multiple of 4")
+  }
+
+  def read32(addr: BigInt): BigInt = {
+    val off = (addr & 0x00ffffffL).toInt
+    if (off % 4 != 0) {
+      throw new Exception(f"read32 address $addr%x must be 32-bit aligned")
+    }
+    if ((off + 4) >= data.length) {
+      throw new Exception(f"Can't read $addr%x, length=${data.length}%x")
+    }
+    val word = (
+      (data(off + 0) & 0xff) << 0 |
+      (data(off + 1) & 0xff) << 8 |
+      (data(off + 2) & 0xff) << 16  |
+      (data(off + 3) & 0xff) << 24
+    ) & 0xffffffffL
+    word
+  }
+
+  println(f"${read32(0)}%x")
+}
+
 
 // Primitive solution for managing synchronous state outside of the DUT.
 // This sucks, but whatever. 
@@ -76,6 +105,7 @@ class ZnoFrontcoreSpec extends AnyFlatSpec with ChiselScalatestTester {
       dut => 
       implicit val clk: Clock = dut.clock
       var h = new SimHarness
+      var rom = new SimROM("rvfw/test.text.bin")
 
       def sim_ftq(): Unit = {
         if (h.cycle == 0) {
@@ -91,13 +121,21 @@ class ZnoFrontcoreSpec extends AnyFlatSpec with ChiselScalatestTester {
       h.init_reg("addr", 0)
       h.init_reg("cyc", 0)
       def sim_ibus(): Unit = {
+        // defaults
         dut.io.ibus.resp.valid.poke(false.B)
         dut.io.ibus.resp.bits.addr.poke(0)
         dut.io.ibus.resp.bits.data(0).poke(0)
+        dut.io.ibus.resp.bits.data(1).poke(0)
+        dut.io.ibus.resp.bits.data(2).poke(0)
+        dut.io.ibus.resp.bits.data(3).poke(0)
+        dut.io.ibus.resp.bits.data(4).poke(0)
+        dut.io.ibus.resp.bits.data(5).poke(0)
+        dut.io.ibus.resp.bits.data(6).poke(0)
+        dut.io.ibus.resp.bits.data(7).poke(0)
 
-        val req_vld    = dut.io.ibus.req.valid.peek().litToBoolean
-        val req_addr   = dut.io.ibus.req.bits.peek().litValue
-        val resp_ready = dut.io.ibus.resp.ready.peek().litToBoolean
+        val req_vld    = dut.io.ibus.req.valid.peekBoolean()
+        val req_addr   = dut.io.ibus.req.bits.peekInt()
+        val resp_ready = dut.io.ibus.resp.ready.peekBoolean()
         val req_rdy = h.read_reg_bool("go")
         dut.io.ibus.req.ready.poke(!req_rdy)
         if (req_vld && !req_rdy) {
@@ -109,8 +147,16 @@ class ZnoFrontcoreSpec extends AnyFlatSpec with ChiselScalatestTester {
           if (h.cycle >= h.read_reg_int("cyc") + 4) {
             println("bus transaction driving results ...")
             dut.io.ibus.resp.valid.poke(true.B)
-            dut.io.ibus.resp.bits.data(0).poke(0x5a5a5a5aL)
-            dut.io.ibus.resp.bits.addr.poke(h.read_reg_int("addr"))
+            val addr = h.read_reg_int("addr")
+            dut.io.ibus.resp.bits.addr.poke(addr)
+            dut.io.ibus.resp.bits.data(0).poke(rom.read32(addr+0x00))
+            dut.io.ibus.resp.bits.data(1).poke(rom.read32(addr+0x04))
+            dut.io.ibus.resp.bits.data(2).poke(rom.read32(addr+0x08))
+            dut.io.ibus.resp.bits.data(3).poke(rom.read32(addr+0x0c))
+            dut.io.ibus.resp.bits.data(4).poke(rom.read32(addr+0x10))
+            dut.io.ibus.resp.bits.data(5).poke(rom.read32(addr+0x14))
+            dut.io.ibus.resp.bits.data(6).poke(rom.read32(addr+0x18))
+            dut.io.ibus.resp.bits.data(7).poke(rom.read32(addr+0x1c))
 
             // When DUT drives ready we assume the results are captured
             if (resp_ready) {

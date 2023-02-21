@@ -43,6 +43,14 @@ class FetchTarget(implicit p: ZnoParam) extends Bundle {
   val addr = UInt(p.xlen.W)
 }
 
+
+class ImmediateFile(implicit p: ZnoParam) extends Module {
+  val io = IO(new Bundle { 
+    val pdec_immd = Input(Vec(p.id_width, Valid(new RvImmData)))
+  })
+}
+
+
 // The front-end of the machine.
 class ZnoFrontcore(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle {
@@ -53,8 +61,11 @@ class ZnoFrontcore(implicit p: ZnoParam) extends Module {
     val ftq_in  = Flipped(Decoupled(new FetchTarget))
 
     val dbg_info = Output(Vec(p.id_width, new PredecodeInfo))
-    val dbg_immd = Output(Vec(p.id_width, new RvImmData))
+    val dbg_immd = Output(Vec(p.id_width, Valid(new RvImmData)))
   })
+
+  // Immediate register file
+  val immf = Module(new ImmediateFile)
 
   // Predecode units
   val predec = Seq.fill(p.id_width)(Module(new Predecoder))
@@ -84,22 +95,33 @@ class ZnoFrontcore(implicit p: ZnoParam) extends Module {
   io.ibus.req.bits   := ftq.io.deq.bits.addr //FIXME: assuming alignment?
   io.ibus.resp.ready := !ibus_result_valid
 
+  // Predecode stage becomes valid when the ibus response occurs
   val ftgt = RegEnable(ftq.io.deq.bits.addr, ftq.io.deq.fire)
   val fblk = RegEnable(io.ibus.resp.bits, io.ibus.resp.fire)
-  // The next stage is valid when the response occurs
   when (!ibus_result_valid && io.ibus.resp.fire) {
     ibus_result_valid := true.B
   }
 
+  // Each word in the ibus response goes to a predecoder
   val info_out = Wire(Vec(p.id_width, new PredecodeInfo))
-  val immd_out = Wire(Vec(p.id_width, new RvImmData))
+  val immd_out = Wire(Vec(p.id_width, Valid(new RvImmData)))
   for (i <- 0 to p.id_width-1) {
     predec(i).io.opcd := fblk.data(i)
-    info_out(i) := predec(i).io.info
-    immd_out(i) := predec(i).io.immd
-    io.dbg_info(i) := info_out(i)
-    io.dbg_immd(i) := immd_out(i)
+
+    // FIXME: Temporary until we use these signals somewhere
+    io.dbg_info(i) := predec(i).io.info
+    io.dbg_immd(i) := predec(i).io.immd
+
+    info_out(i)    := predec(i).io.info
+    immd_out(i)    := predec(i).io.immd
+
+    immf.io.pdec_immd(i) := immd_out(i)
+
   }
+
+  //val predecode_valid = RegInit(false.B)
+  //val s2_info = RegEnable(info_out, ibus_result_valid
+  //val s2_immd = RegEnable(immd_out, ibus_result_valid
 
   printf("[ZnoFrontCore] ftgt = %x\n", ftgt)
   printf("[ZnoFrontCore] fblk.addr = %x\n", fblk.addr)

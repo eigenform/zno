@@ -80,7 +80,7 @@ object PredecodeTable {
 // This occurs in-between instruction fetch and instruction decode.
 // This serves a few purposes: 
 //
-//  (a) By trying to discovery branches as early as possible in the pipeline, 
+//  (a) By trying to discover branches as early as possible in the pipeline, 
 //      this presumably makes it easier to validate a prediction before the
 //      block reaches the back-end of the machine
 //
@@ -94,7 +94,7 @@ class Predecoder(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle {
     val opcd = Input(UInt(32.W))
     val info = Output(new PredecodeInfo)
-    val immd = Output(new RvImmData)
+    val immd = Output(Valid(new RvImmData))
   })
 
   val info   = PredecodeTable.generate_decoder(io.opcd)
@@ -113,7 +113,7 @@ class ImmediateDecoder(implicit p: ZnoParam) extends Module {
   val io   = IO(new Bundle {
     val ifmt = Input(ImmFmt())
     val inst = Input(UInt(p.xlen.W))
-    val out  = Output(new RvImmData)
+    val out  = Output(Valid(new RvImmData))
   })
   val inst = io.inst
 
@@ -136,13 +136,14 @@ class ImmediateDecoder(implicit p: ZnoParam) extends Module {
   val len     = Mux(is_zero, 0.U, PriorityEncoderHi(imm))
   val can_inl = (len <= p.pwidth.U)
 
-  io.out.ctl := MuxCase(UopImmCtl.NONE, Seq(
+  io.out.valid    := valid
+  io.out.bits.ctl := MuxCase(UopImmCtl.NONE, Seq(
     (valid && is_zero)              -> UopImmCtl.ZERO,
     (valid && !is_zero && can_inl)  -> UopImmCtl.INL,
     (valid && !is_zero && !can_inl) -> UopImmCtl.ALC,
   ))
-  io.out.sign := inst(31)
-  io.out.imm  := imm
+  io.out.bits.sign := inst(31)
+  io.out.bits.imm  := imm
 }
 
 

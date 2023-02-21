@@ -24,4 +24,4 @@ dis:
 	$(OBJDUMP) -Mnumeric -d test.elf
 
 clean:
-	rm -rvf test.bin test.o
+	rm -rvf *.bin *.elf *.mem
