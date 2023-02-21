@@ -14,30 +14,34 @@ import zno.core.uarch._
 import zno.core.front.decode.BrnOp
 import zno.core.front.decode.JmpOp
 
-class PredecodeInfo extends Bundle with AsBitPat {
-  val kind    = UopKind()
-  val ifmt    = ImmFmt()
-  val brn_op  = BrnOp()
-  val jmp_op  = JmpOp()
+object BranchOp extends ChiselEnum {
+  val PB_NONE = Value
+  val PB_JAL  = Value
+  val PB_JALR = Value
+  val PB_B    = Value
 }
+
+
+// [PredecodeTable] output
+class PredecodeInfo extends Bundle with AsBitPat {
+  val brn_op  = BranchOp()
+  val ifmt    = ImmFmt()
+}
+
 object PredecodeInfo {
   def apply(
-    kind: UopKind.Type, ifmt: ImmFmt.Type, 
-    jmp_op: JmpOp.Type, brn_op: BrnOp.Type,
+    brn_op: BranchOp.Type, ifmt: ImmFmt.Type, 
   ): BitPat = {
     (new PredecodeInfo).Lit(
-      _.kind   -> kind,   _.ifmt    -> ifmt,
-      _.jmp_op -> jmp_op, _.brn_op  -> brn_op,
+      _.brn_op   -> brn_op,   _.ifmt    -> ifmt,
     ).to_bitpat()
   }
 }
 
 object PredecodeTable {
   import Rv32iPattern._
-  import BrnOp._
-  import JmpOp._
   import ImmFmt._
-  import UopKind._
+  import BranchOp._
 
   val N = false.B
   val Y = true.B
@@ -45,20 +49,39 @@ object PredecodeTable {
 
   // A map from an instruction bitpattern to a set of control signals.
   val matches = Array(
-    JAL    -> PredecodeInfo(U_JMP, F_J,  J_DIR, B_NOP ),
-    JALR   -> PredecodeInfo(U_JMP, F_I,  J_IND, B_NOP ),
-    BEQ    -> PredecodeInfo(U_BRN, F_B,  J_NOP, B_EQ  ),
-    BGE    -> PredecodeInfo(U_BRN, F_B,  J_NOP, B_GE  ),
-    BGEU   -> PredecodeInfo(U_BRN, F_B,  J_NOP, B_GEU ),
-    BLT    -> PredecodeInfo(U_BRN, F_B,  J_NOP, B_LT  ),
-    BLTU   -> PredecodeInfo(U_BRN, F_B,  J_NOP, B_LTU ),
-    BNE    -> PredecodeInfo(U_BRN, F_B,  J_NOP, B_NE  ),
+    JAL    -> PredecodeInfo(PB_JAL,  F_J),
+    JALR   -> PredecodeInfo(PB_JALR, F_I),
+    BEQ    -> PredecodeInfo(PB_B,    F_B),
+    BGE    -> PredecodeInfo(PB_B,    F_B),
+    BGEU   -> PredecodeInfo(PB_B,    F_B),
+    BLT    -> PredecodeInfo(PB_B,    F_B),
+    BLTU   -> PredecodeInfo(PB_B,    F_B),
+    BNE    -> PredecodeInfo(PB_B,    F_B),
+    ADDI   -> PredecodeInfo(PB_NONE, F_I),
+    ANDI   -> PredecodeInfo(PB_NONE, F_I),
+    ORI    -> PredecodeInfo(PB_NONE, F_I),
+    SLLI   -> PredecodeInfo(PB_NONE, F_I),
+    SLTI   -> PredecodeInfo(PB_NONE, F_I),
+    SLTIU  -> PredecodeInfo(PB_NONE, F_I),
+    SRAI   -> PredecodeInfo(PB_NONE, F_I),
+    SRLI   -> PredecodeInfo(PB_NONE, F_I),
+    XORI   -> PredecodeInfo(PB_NONE, F_I),
+    LB     -> PredecodeInfo(PB_NONE, F_I),
+    LH     -> PredecodeInfo(PB_NONE, F_I),
+    LW     -> PredecodeInfo(PB_NONE, F_I),
+    LBU    -> PredecodeInfo(PB_NONE, F_I),
+    LHU    -> PredecodeInfo(PB_NONE, F_I),
+    SB     -> PredecodeInfo(PB_NONE, F_S),
+    SH     -> PredecodeInfo(PB_NONE, F_S),
+    SW     -> PredecodeInfo(PB_NONE, F_S),
+    AUIPC  -> PredecodeInfo(PB_NONE, F_U),
+    LUI    -> PredecodeInfo(PB_NONE, F_U),
   )
 
   // The default set of control signals for instructions that do not match
   // any of the related bitpatterns.
   val default = {
-              PredecodeInfo(U_ILL, F_NA, J_NOP, B_NOP )
+              PredecodeInfo(PB_NONE, F_NA)
   }
 
   // NOTE: Chisel has some default logic minimzation, but I think this uses
@@ -85,7 +108,7 @@ object PredecodeTable {
 //      block reaches the back-end of the machine
 //
 //  (b) This seems like a clean way to distinguish "immediate decoding" from 
-//      micro-op decoding. 
+//      micro-op decoding?
 //
 //  (c) We can build a mask of valid instructions for each fetch block. 
 //      
