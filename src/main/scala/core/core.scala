@@ -27,15 +27,14 @@ class ZnoCore extends Module {
   val mc = Module(new ZnoMidcore)
   val bc = Module(new ZnoBackcore)
 
-  // The "fetch block queue" decoupling [ZnoFrontcore] from [ZnoMidcore].
-  val fbq = Module(new Queue(new FetchBlock, p.fbq_sz))
 
+  val opq = Module(new Queue(new zno.core.front.decode.DecodeBlock, p.opq_sz))
 
   fc.io.ibus    <> io.ibus
   fc.io.ftq_in  <> DontCare
 
-  fc.io.fbq_out <> fbq.io.enq
-  mc.io.fbq_deq <> fbq.io.deq
+  fc.io.opq     <> opq.io.enq
+  mc.io.opq     <> opq.io.deq
 
 }
 

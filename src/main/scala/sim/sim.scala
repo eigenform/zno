@@ -11,7 +11,7 @@ import chiseltest.experimental._
 import scala.collection.mutable.HashMap
 
 
-// Simple container for RISC-V stimulus (this sucks, lol)
+// Simple container for RISC-V stimulus.
 class SimROM(file: String) {
   import java.nio.file.{Files, Paths}
 
@@ -40,12 +40,10 @@ class SimROM(file: String) {
 
 
 // Primitive solution for managing synchronous state outside of the DUT.
-// This sucks, but whatever. 
 //
+// 'chiseltest' doesn't let you instantiate hardware beyond the DUT. 
 // Basically, we're just tracking clock cycles here and updating these 
-// maps when we step the DUT clock. 
-//
-// (If only chiseltest let you instantiate hardware outside the DUT ..)
+// hashmaps with 'registered values' when we step the DUT clock.
 //
 class SimHarness(implicit val clk: Clock) {
   var cycle: BigInt = 0

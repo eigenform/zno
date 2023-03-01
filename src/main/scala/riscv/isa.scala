@@ -4,6 +4,8 @@ import chisel3._
 import chisel3.util._
 import chisel3.experimental.ChiselEnum
 
+import zno.common.Sext
+
 // RISC-V instruction encoding types.
 object RvEncType extends ChiselEnum {
   val ENC_ILL = Value
@@ -14,6 +16,70 @@ object RvEncType extends ChiselEnum {
   val ENC_U   = Value // rd,   _,   _, imm
   val ENC_J   = Value // rd,   _,   _, imm
 }
+
+// RISC-V immediate formats. 
+//
+// NOTE: After an immediate has been extracted from an instruction, the
+// full 32-bit value is recovered with the following operations:
+//
+//   I-type: sext32(imm12)
+//   S-type: sext32(imm12)
+//   B-type: sext32(imm12 << 1)
+//   U-type: (imm20 << 12)
+//   J-type: sext32(imm20 << 1)
+//
+
+object ImmFmt extends ChiselEnum {
+  val F_NA = Value
+  val F_I  = Value
+  val F_S  = Value
+  val F_B  = Value
+  val F_U  = Value
+  val F_J  = Value
+}
+
+//def extract_i(opcd: UInt): UInt = { 
+//  Cat(opcd(31, 20)) 
+//}
+//def expand_i(imm: UInt): UInt = {
+//  require(imm.getWidth == 12)
+//  Sext(imm, 32)
+//}
+//def extract_s(opcd: UInt): UInt = {
+//  Cat(opcd(31, 25), opcd(11, 7))
+//}
+//def expand_s(imm: UInt): UInt = {
+//  require(imm.getWidth == 12)
+//  Sext(imm, 32)
+//}
+//def extract_b(opcd: UInt): UInt = {
+//  Cat(opcd(31), opcd(7), opcd(30, 25), opcd(11, 8))
+//}
+//def expand_b(imm: UInt): UInt = {
+//  require(imm.getWidth == 12)
+//  Sext(Cat(imm, 0.U(1.W)), 32)
+//}
+//def extract_u(opcd: UInt): UInt = {
+//  Cat(opcd(31, 12))
+//}
+//def expand_u(imm: UInt): UInt = {
+//  require(imm.getWidth == 20)
+//  Cat(imm, 0.U(12.W))
+//}
+//def extract_j(opcd: UInt): UInt = {
+//  Cat(opcd(31), opcd(19, 12), opcd(20), opcd(30, 25), opcd(24, 21))
+//}
+//def expand_j(imm: UInt): UInt = {
+//  require(imm.getWidth == 20)
+//  Sext(Cat(imm, 0.U(1.W)), 32)
+//}
+
+
+
+
+
+
+
 
 // RISC-V instruction opcodes.
 //
@@ -69,24 +135,6 @@ object RvOpcode extends ChiselEnum {
   val RES_2      = Value("b11101".U)
   val CUSTOM_3   = Value("b11110".U)
   val UNDEF      = Value("b11111".U)
-}
-
-// Different kinds of RISC-V immediate encodings. 
-//
-// NOTE: After an immediate has been extracted from an instruction, the
-// full 32-bit value is recovered with the following operations:
-//
-//   I-type: sext32(imm12)
-//   S-type: sext32(imm12)
-//   B-type: sext32(imm12 << 1)
-//   U-type: (imm20 << 12)
-//   J-type: sext32(imm20 << 1)
-//
-object RvImmType extends ChiselEnum {
-  val IS = Value
-  val B  = Value
-  val U  = Value
-  val J  = Value
 }
 
 // RV32I matching bit patterns.

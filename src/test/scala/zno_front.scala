@@ -25,13 +25,17 @@ class ZnoFrontcoreSpec extends AnyFlatSpec with ChiselScalatestTester {
       var h = new SimHarness
       var rom = new SimROM("tb/zno_front.text.bin")
 
+      def sim_opq(): Unit = {
+        dut.io.opq.ready.poke(true.B)
+      }
+
       def sim_ftq(): Unit = {
-        if (h.cycle == 0) {
+        if (h.cycle == 1) {
           dut.io.ftq_in.valid.poke(true.B)
-          dut.io.ftq_in.bits.addr.poke(0x80000000L.U)
+          dut.io.ftq_in.bits.poke((0x80000000L >> p.fblk_width).U)
         } else {
           dut.io.ftq_in.valid.poke(false.B)
-          dut.io.ftq_in.bits.addr.poke(0.U)
+          dut.io.ftq_in.bits.poke(0.U)
         }
       }
 
@@ -66,15 +70,17 @@ class ZnoFrontcoreSpec extends AnyFlatSpec with ChiselScalatestTester {
             println("bus transaction driving results ...")
             dut.io.ibus.resp.valid.poke(true.B)
             val addr = h.read_reg_int("addr")
+            val rom_addr = addr << p.fblk_width
+
             dut.io.ibus.resp.bits.addr.poke(addr)
-            dut.io.ibus.resp.bits.data(0).poke(rom.read32(addr+0x00))
-            dut.io.ibus.resp.bits.data(1).poke(rom.read32(addr+0x04))
-            dut.io.ibus.resp.bits.data(2).poke(rom.read32(addr+0x08))
-            dut.io.ibus.resp.bits.data(3).poke(rom.read32(addr+0x0c))
-            dut.io.ibus.resp.bits.data(4).poke(rom.read32(addr+0x10))
-            dut.io.ibus.resp.bits.data(5).poke(rom.read32(addr+0x14))
-            dut.io.ibus.resp.bits.data(6).poke(rom.read32(addr+0x18))
-            dut.io.ibus.resp.bits.data(7).poke(rom.read32(addr+0x1c))
+            dut.io.ibus.resp.bits.data(0).poke(rom.read32(rom_addr | 0x00))
+            dut.io.ibus.resp.bits.data(1).poke(rom.read32(rom_addr | 0x04))
+            dut.io.ibus.resp.bits.data(2).poke(rom.read32(rom_addr | 0x08))
+            dut.io.ibus.resp.bits.data(3).poke(rom.read32(rom_addr | 0x0c))
+            dut.io.ibus.resp.bits.data(4).poke(rom.read32(rom_addr | 0x10))
+            dut.io.ibus.resp.bits.data(5).poke(rom.read32(rom_addr | 0x14))
+            dut.io.ibus.resp.bits.data(6).poke(rom.read32(rom_addr | 0x18))
+            dut.io.ibus.resp.bits.data(7).poke(rom.read32(rom_addr | 0x1c))
 
             // When DUT drives ready we assume the results are captured
             if (resp_ready) {
@@ -92,6 +98,7 @@ class ZnoFrontcoreSpec extends AnyFlatSpec with ChiselScalatestTester {
 
       for (_ <- 1 to 32) {
         h.print_state()
+        sim_opq()
         sim_ftq()
         sim_ibus()
         h.step()

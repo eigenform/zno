@@ -4,42 +4,12 @@ import chisel3._
 import chisel3.util._
 import chisel3.experimental.BundleLiterals._
 
-class SimpleCAMReadPort[T <: Data, D <: Data](t: T, d: D) extends Bundle {
-  val en   = Input(Bool())
-  val tag  = Input(t)
-  val data = Output(d)
-}
-class SimpleCAMWritePort[T <: Data, D <: Data](t: T, d: D) extends Bundle {
-  val en   = Input(Bool())
-  val tag  = Input(t)
-  val data = Input(d)
-}
-
-// [Naive] fully-associative content-addressible memory. 
-class SimpleCAM[T <: Data, D <: Data]
-  (t: T, d: D, size: Int, num_rp: Int, num_wp: Int) extends Module 
-{
-  val io = IO(new Bundle {
-    val rp = Vec(num_rp, new SimpleCAMReadPort(t, d))
-    val wp = Vec(num_wp, new SimpleCAMWritePort(t, d))
-  })
-
-  val tag  = RegInit(0.U.asTypeOf(Vec(size, t)))
-  val data = RegInit(0.U.asTypeOf(Vec(size, d)))
-
-  // FIXME
-}
-
-
-// Return the bit index of the most-significant set bit.
-//
-// NOTE: [PriorityEncoder] from Chisel3 selects the least-significant bit.
-object PriorityEncoderHi {
-  def apply(in: Seq[Bool]): UInt = {
-    PriorityMux(in, (0 until in.size).reverse.map(_.asUInt))
-  }
-  def apply(in: Bits): UInt = {
-    apply(in.asBools)
+// Sign-extend some value 'data' to some number of bits 'len'
+object Sext {
+  def apply(data: UInt, len: Int): UInt = {
+    require(len > data.getWidth)
+    val sign = data(data.getWidth - 1)
+    Cat(Fill(len - data.getWidth, sign), data)
   }
 }
 
@@ -57,4 +27,36 @@ object ChainedPriorityEncoderOH {
   }
 }
 
+// Create a balanced tree of binary operations on some data. 
+//
+// NOTE: Chisel lets you do this on [Vec], but it seems like it'd be nice to 
+// have this on some arbitrary [Seq] of signals?
+//
+// Is this something that we'd expect synthesis tools to recognize for us (ie. 
+// turning things into trees like this), or do we always need to explicitly 
+// specify when this should happen?
+//
+object ReduceTree {
+  import java.lang.Math.{floor, log10, pow}
+
+  def apply[T](s: Seq[T], op: (T, T) => T): T = {
+    apply(s, op, lop = (x: T) => (x))
+  }
+  def apply[T](s: Seq[T], op: (T, T) => T, lop: (T) => T): T = {
+    require(s.nonEmpty, "Cannot apply reduction on an empty Seq")
+    val n = s.length
+    n match {
+      case 1 => lop(s(0))
+      case 2 => op(s(0), s(1))
+      case _ => 
+        val m = pow(2, floor(log10(n-1) / log10(2))).toInt
+        val p = 2 * m - n
+        val l = s.take(p).map(lop)
+        val r = s.drop(p).grouped(2).map {
+          case Seq(a, b) => op(a, b)
+        }.toSeq
+        apply(l ++ r, op, lop)
+    }
+  }
+}
 

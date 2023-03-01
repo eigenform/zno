@@ -11,6 +11,7 @@ import zno.common._
 import zno.common.bitpat._
 import zno.riscv.isa._
 import zno.core.uarch._
+import zno.core.front._
 
 // Decode stage logic.
 //
@@ -319,14 +320,19 @@ class UopDecoder(implicit p: ZnoParam) extends Module {
   import AluSrcType._
   import ImmFmt._
 
-  val inst    = IO(Input(UInt(p.xlen.W)))
-  val uop_ctl = IO(Output(new UopCtl))
-  val op_ctl  = DecoderTable.generate_decoder(inst)
+  val io = IO(new Bundle {
+    val inst = Input(UInt(p.xlen.W))
+    val out  = Output(new UopCtl)
+  })
+
+  val inst   = io.inst
+  val out    = io.out
+  val op_ctl = DecoderTable.generate_decoder(inst)
 
   // Architectural registers
-  val rd      = inst(11, 7)
-  val rs1     = inst(19, 15)
-  val rs2     = inst(24, 20)
+  val rd  = inst(11, 7)
+  val rs1 = inst(19, 15)
+  val rs2 = inst(24, 20)
 
   // "Do we need to allocate a result register?"
   val rr_alc  = (op_ctl.rr) && (rd =/= 0.U)
@@ -348,7 +354,7 @@ class UopDecoder(implicit p: ZnoParam) extends Module {
   val imm_sign  = inst(31)
   val imm_zero  = (imm_data === 0.U)
   val imm_valid = (op_ctl.ifmt =/= F_NA)
-  val imm_len   = Mux(imm_zero, 0.U, PriorityEncoderHi(imm_data))
+  val imm_len   = Mux(imm_zero, 0.U, ~PriorityEncoder(imm_data.asBools.reverse))
   val imm_inl   = (imm_len <= p.pwidth.U)
   val imm_ctl   = MuxCase(UopImmCtl.NONE, Seq(
     (imm_valid && imm_zero)              -> UopImmCtl.ZERO,
@@ -396,45 +402,53 @@ class UopDecoder(implicit p: ZnoParam) extends Module {
   )
 
 
-  uop_ctl.kind    := op_ctl.kind
-  uop_ctl.ifmt    := op_ctl.ifmt
-  uop_ctl.brn_op  := op_ctl.brn_op
-  uop_ctl.jmp_op  := op_ctl.jmp_op
-  uop_ctl.mem_w   := op_ctl.mem_w
-  uop_ctl.ld_sext := op_ctl.ld_sext
-  uop_ctl.rr      := op_ctl.rr
-  uop_ctl.alu_op  := op_ctl.alu_op
-  uop_ctl.alu_src := op_ctl.alu_src
-  uop_ctl.src1    := op_ctl.src1
-  uop_ctl.src2    := op_ctl.src2
+  out.kind    := op_ctl.kind
+  out.ifmt    := op_ctl.ifmt
+  out.brn_op  := op_ctl.brn_op
+  out.jmp_op  := op_ctl.jmp_op
+  out.mem_w   := op_ctl.mem_w
+  out.ld_sext := op_ctl.ld_sext
+  out.rr      := op_ctl.rr
+  out.alu_op  := op_ctl.alu_op
+  out.alu_src := op_ctl.alu_src
+  out.src1    := op_ctl.src1
+  out.src2    := op_ctl.src2
 
-  uop_ctl.imm_ctl  := imm_ctl
-  uop_ctl.imm_data := imm_data
-  uop_ctl.imm_sign := imm_sign
-  uop_ctl.mov_ctl  := mov_ctl
+  out.imm_ctl  := imm_ctl
+  out.imm_data := imm_data
+  out.imm_sign := imm_sign
+  out.mov_ctl  := mov_ctl
 
-  uop_ctl.rr_alc  := rr_alc
-  uop_ctl.agu_alc := agu_alc
+  out.rr_alc  := rr_alc
+  out.agu_alc := agu_alc
 
-  uop_ctl.rd      := rd
-  uop_ctl.rs1     := rs1
-  uop_ctl.rs2     := rs2
+  out.rd      := rd
+  out.rs1     := rs1
+  out.rs2     := rs2
 
 }
 
-class DecodeStage(implicit p: ZnoParam) extends Module {
-  val req  = IO(Input(Vec(p.id_width, UInt(p.xlen.W))))
-  val res  = IO(new FIFOProducerIO(new UopCtl, p.id_width))
+class DecodeBlock(implicit p: ZnoParam) extends Bundle {
+  val addr = p.FetchBlockAddress() 
+  val data = Vec(p.id_width, new UopCtl)
+}
 
-  res.len := 0.U
-  val lim  = res.lim
 
-  val uopdec = Seq.fill(p.id_width)(Module(new UopDecoder))
+class DecodeUnit(implicit p: ZnoParam) extends Module {
+  val io = IO(new Bundle {
+    val fbq = Flipped(Decoupled(new FetchBlock))
+    val opq = Decoupled(new DecodeBlock)
+  })
+
+  io.fbq.ready := io.opq.ready
+  io.opq.valid := io.fbq.valid
+  io.opq.bits.addr := io.fbq.bits.addr
+
+  val dec = Seq.fill(p.id_width)(Module(new UopDecoder))
   for (idx <- 0 until p.id_width) {
-    uopdec(idx).inst := req(idx)
-    res.data(idx)    := uopdec(idx).uop_ctl
+    dec(idx).inst         := io.fbq.bits.data(idx)
+    io.opq.bits.data(idx) := dec(idx).out
   }
-
 
 }
 
