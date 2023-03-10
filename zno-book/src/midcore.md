@@ -72,12 +72,7 @@ The following integer operations can be squashed into a move operation:
 
 After scanning for non-scheduled instructions, we can determine whether or
 not each instruction in the decode window should allocate a physical register. 
-Non-scheduled instructions do not allocate, and the remaining instructions
-that 
-
-
-all entries in the
-decode window have an appropriate destination. 
+Non-scheduled instructions do not allocate.
 
 In general, there are two possible interactions with the write ports: 
 
@@ -86,13 +81,28 @@ In general, there are two possible interactions with the write ports:
 2. For non-scheduled instructions, we bind `rd` to the appropriate 
    physical source register 
 
-
 ## Local Dependences
 
 For those instructions whose source registers are written by some previous
 instruction in the window, the register map cannot be used to resolve the
-physical register. Instead, the most-recent newly-allocated physical 
-destination must be forwarded. 
+physical register. In any case, the appropriate register name must be 
+forwarded from the most-recent producer in the decode window:
+
+- When the producer is a scheduled instruction (with allocates), the 
+  newly-allocated physical destination is used to resolve the name
+- **TODO**
+
+```admonish note
+Since non-scheduled instructions do not have a physical destination, what
+are we supposed to do when some source relies on a previous non-scheduled
+instruction? 
+
+- We could add read ports for each architectural destination?
+- We could add ports that copy from one binding to another?
+
+```
+
+
 
 
 
