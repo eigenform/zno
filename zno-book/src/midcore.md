@@ -1,5 +1,9 @@
 # ZNO Midcore
 
+```admonish note
+Currently, this page describes renaming for integer operations only. 
+```
+
 ## Freelist
 
 A **freelist** stores the set of physical registers that are available for
@@ -7,8 +11,8 @@ allocation.
 There is one read port for each entry in the decode window.
 The index of a free physical register is always being driven over the read
 port (if a register is available), along with a `valid` bit.
-When the `alloc` bit for a read port is held high by the user, the 
-corresponding physical register is marked for use on the next clock cycle. 
+When the `alloc` bit on a read port is held high, the corresponding physical
+register is marked as in-use starting on the next clock cycle. 
 
 
 ## Register Map
@@ -21,13 +25,6 @@ The register map also tracks which architectural registers are bound to the
 physical register 0. Each write port has a comparator used to determine 
 how the zero bit should be updated along with the binding. 
 These status bits are always driven as output.
-
-In general, there are two possible interactions with the write ports: 
-
-1. For scheduled instructions that must allocate, we bind `rd` to the 
-   newly-allocated physical destination register
-2. For non-scheduled instructions, we bind `rd` to the appropriate 
-   physical source register 
 
 ## Register Rename
 
@@ -51,8 +48,8 @@ into physical operands. Renaming is mainly used to prepare instructions for
 out-of-order scheduling and execution in the backend. 
 
 However, some macro-ops can be completed early during this stage by simply
-writing to the register map. These need to be detected before handling the 
-rest of the instructions in the window. 
+writing to the register map. These need to be detected before determining 
+what should happen with the rest of the instructions in the window. 
 
 
 ## Detecting Non-Scheduled Instructions
@@ -73,8 +70,22 @@ The following integer operations can be squashed into a move operation:
 - For subtraction and logical XOR, when both operands are equal, move zero 
 - For logical AND, when either operand is zero, move zero
 
-Non-scheduled instructions do not allocate a destination register from the 
-freelist. 
+After scanning for non-scheduled instructions, we can determine whether or
+not each instruction in the decode window should allocate a physical register. 
+Non-scheduled instructions do not allocate, and the remaining instructions
+that 
+
+
+all entries in the
+decode window have an appropriate destination. 
+
+In general, there are two possible interactions with the write ports: 
+
+1. For scheduled instructions that must allocate, we bind `rd` to the 
+   newly-allocated physical destination register
+2. For non-scheduled instructions, we bind `rd` to the appropriate 
+   physical source register 
+
 
 ## Local Dependences
 
