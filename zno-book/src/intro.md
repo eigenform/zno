@@ -18,4 +18,4 @@ The `ZNO` core is split into three pieces:
 - The **midcore** (for managing state)
 - The **backcore** (for dealing with data-flow)
 
-
+![Diagram](./img/zno_core-overview.png)
