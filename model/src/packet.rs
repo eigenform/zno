@@ -38,12 +38,12 @@ impl <T, const SIZE: usize> Packet<T, SIZE>
     }
 
     /// Return the number of *valid* entries in this packet.
-    pub fn len(&self) -> usize { 
+    pub fn valid_len(&self) -> usize { 
         self.data.iter().filter(|x| x.is_some()).count()
     }
 
     /// Return an iterator over all *valid* entries in this packet.
-    pub fn iter(&self) -> impl Iterator<Item=&T> + '_ {
+    pub fn valid_iter(&self) -> impl Iterator<Item=&T> + '_ {
         self.data.iter().flat_map(|x| x)
     }
 
@@ -162,8 +162,8 @@ impl <T, const CAP: usize, const PSIZE: usize>
         }
         // Push new entries onto the queue
         if let Some(input) = &self.input {  
-            assert!(input.len() + self.data.len() <= CAP);
-            for idx in 0..input.len() { 
+            assert!(input.valid_len() + self.data.len() <= CAP);
+            for idx in 0..input.valid_len() { 
                 self.data.push_back(input[idx]);
             }
             self.input = None;

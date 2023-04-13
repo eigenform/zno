@@ -1,3 +1,4 @@
+//! Definitions related to the RISC-V instruction set.
 
 
 /// RV32I instruction formats.
@@ -267,7 +268,8 @@ pub enum BranchInfo {
 }
 
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Representing some encoding of a RISC-V instruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Instr {
     /// ALU operation
     Op { rd: ArchReg, rs1: ArchReg, rs2: ArchReg, alu_op: RvALUOp },
@@ -296,13 +298,64 @@ pub enum Instr {
     /// Conditional branch
     Branch { rs1: ArchReg, rs2: ArchReg, simm: i32, brn_op: RvBranchOp },
 
+    Ecall { prv: u32 },
+    Ebreak { prv: u32 },
+
     /// Illegal instruction
     Illegal(u32),
 }
+
 impl Instr { 
+    /// Returns true if this instruction is a load operation.
     pub fn is_ld(&self) -> bool { matches!(self, Self::Load { .. }) }
+
+    /// Returns true if this instruction is a store operation.
     pub fn is_st(&self) -> bool { matches!(self, Self::Store { .. }) }
 
+    /// Returns true if this instruction is a direct unconditional jump
+    pub fn is_jmp(&self) -> bool { 
+        matches!(self, Self::Jal { rd: ArchReg(0), .. }) 
+    }
+
+
+    /// Returns true if this instruction has no effective architectural
+    /// side-effects.
+    ///
+    /// The RISC-V ISA defines an explicit NOP encoding (`addi x0, x0, 0`).
+    /// However, all other integer operations with `rd == x0` should also
+    /// be treated as no-ops. 
+    ///
+    pub fn is_nop(&self) -> bool {
+        match self { 
+            Self::Op    { rd, .. } |
+            Self::OpImm { rd, .. } |
+            Self::Lui   { rd, .. } |
+            Self::AuiPc { rd, .. } |
+            Self::Load  { rd, .. } if *rd == ArchReg(0) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns true if this instruction will be scheduled.
+    ///
+    /// Some instructions do not need to be sent to execution units in the
+    /// integer pipeline, for instance:
+    ///
+    /// - No-ops do not need to be executed
+    /// - Illegal instructions do not need to be executed
+    ///
+    pub fn is_scheduled(&self) -> bool {
+        if self.is_nop() { 
+            return false;
+        }
+        if matches!(self, Self::Illegal(_)) {
+            return false;
+        }
+        true
+    }
+
+    /// Returns the architectural destination register specified by this
+    /// instruction (if one exists). 
     pub fn rd(&self) -> Option<ArchReg> {
         match self { 
             Self::Op { rd, .. } 
@@ -315,6 +368,35 @@ impl Instr {
             _ => None,
         }
     }
+
+    /// Returns the number of physical register allocations required to
+    /// execute this instruction. 
+    pub fn num_preg_allocs(&self) -> usize {
+        if self.is_nop() { 
+            return 0; 
+        }
+        match self {
+            // Integer operations allocate for 'rd'
+            Self::Op { .. }
+            | Self::OpImm { .. }
+            | Self::Jalr { .. }
+            | Self::AuiPc { .. }
+            | Self::Lui { .. }
+            | Self::Jal { .. } => 1,
+            // Load operations allocate for 'rd' and address generation
+            Self::Load { .. } => 2,
+            // Store operations allocate for address generation
+            Self::Store { .. } => 1,
+            _ => 0,
+        }
+    }
+
+    pub fn num_sch_allocs(&self) -> usize { 
+        if self.is_scheduled() { 1 } else { 0 }
+    }
+
+    /// Return the branch information associated with this instruction 
+    /// (if any exists).
     pub fn branch_info(&self) -> Option<BranchInfo> {
         match self { 
             Self::Jalr { rd, rs1, simm } => { 
@@ -374,11 +456,19 @@ impl Instr {
         }
     }
 }
+
 impl Default for Instr { 
     fn default() -> Self { 
         Self::Illegal(0xdeadc0de)
     }
 }
+
+//impl std::fmt::Debug for Instr {
+//    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//        write!(f, "{}", self)
+//    }
+//}
+
 impl std::fmt::Display for Instr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -414,6 +504,14 @@ impl std::fmt::Display for Instr {
                 let inst = format!("b{}", brn_op);
                 write!(f, "{:6} {}, {}, {}", inst, rs1, rs2, simm)
             },
+            Self::Ecall { prv } => {
+                let inst = format!("ecall");
+                write!(f, "{}", inst)
+            }
+            Self::Ebreak { prv } => {
+                let inst = format!("ebreak");
+                write!(f, "{}", inst)
+            }
             Self::Illegal(enc) => {
                 write!(f, "{:6} {:08x}", "ill", enc)
             },
@@ -424,10 +522,9 @@ impl std::fmt::Display for Instr {
 
 
 
-/// Representing the RV32I instruction set.
+/// Wrapper type for methods implementing an RV32I instruction decoder.
 pub struct Rv32;
 impl Rv32 {
-
     // Bitmasks for fixed fields
     const MASK_OP_2:   u32 = 0b0000000_00000_00000_000_00000_1111100;
     const MASK_RD_7:   u32 = 0b0000000_00000_00000_000_11111_0000000;
@@ -528,8 +625,17 @@ impl Rv32 {
             },
 
             // I-type formats
-            Opcode::MISC_MEM => unimplemented!(),
-            Opcode::SYSTEM   => unimplemented!(),
+            Opcode::MISC_MEM => unimplemented!("MISC_MEM encoding"),
+            Opcode::SYSTEM   => {
+                let f12 = (enc & Self::MASK_I_IMM12_20_31) >> 20;
+                match (f12, rs1, rd) { 
+                    (0b0000_0000_0000, ArchReg(0), ArchReg(0)) => 
+                        Instr::Ecall { prv: f3 },
+                    (0b0000_0000_0001, ArchReg(0), ArchReg(0)) => 
+                        Instr::Ebreak { prv: f3 },
+                    (_, _, _) => Instr::Illegal(op),
+                }
+            },
             Opcode::OP_IMM   => {
                 let simm   = Rv32::build_i_imm(enc);
                 let alu_op = RvALUOpImm::from((f3, f7));

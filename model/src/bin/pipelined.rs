@@ -14,6 +14,7 @@ use zno_model::rv32i::*;
 use zno_model::packet::*;
 use zno_model::front::*;
 use zno_model::dispatch::*;
+use zno_model::retire::*;
 use zno_model::uarch::*;
 use zno_model::sched::*;
 use zno_model::prim::*;
@@ -46,7 +47,7 @@ pub struct FetchResp {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DecodeOut {
     pc: u32,
-    instr: Instr,
+    instr: [Instr; 8],
 }
 
 
@@ -60,21 +61,31 @@ fn main() {
     let r_nfpc = d.track(Register::<u32>::new_init("nfpc", entry));
     // Instruction byte queue
     let q_ibq  = d.track(Queue::<FetchResp, 32>::new("ibq"));
-    // Instruction queue
-    let pq_iq  = d.track(PacketQueue::<DecodeOut, 32, 8>::new("iq"));
+    // Decoded instruction queue
+    //let pq_idq  = d.track(PacketQueue::<DecodeOut, 32, 8>::new("idq"));
+    let q_idq  = d.track(Queue::<DecodeOut, 32>::new("idq"));
+
     // Freelist
     let m_frl  = d.track(Freelist::<256, 8>::new());
+    // Integer Scheduler
+    let m_sch  = d.track(IntegerScheduler::<32, 8>::new());
+    // Reorder buffer
+    let m_rob  = d.track(ReorderBuffer::<512, 8>::new());
 
 
     for cyc in 0..32 {
         {
             println!("======== Cycle {:08x} ========", cyc);
             let ibq = q_ibq.borrow();
-            let iq  = pq_iq.borrow(); 
+            let idq = q_idq.borrow(); 
             let frl = m_frl.borrow(); 
+            let sch = m_sch.borrow();
+            let rob = m_rob.borrow();
             println!("[**] IBQ:  {:03}/{:03}", ibq.num_used(), ibq.capacity());
-            println!("[**] IBUF: {:03}/{:03}", iq.num_used(), iq.capacity());
+            println!("[**] IBUF: {:03}/{:03}", idq.num_used(), idq.capacity());
             println!("[**] FRL:  {:03}/{:03}", frl.num_free(), frl.capacity());
+            println!("[**] SCH:  {:03}/{:03}", sch.num_free(), sch.capacity());
+            println!("[**] ROB:  {:03}/{:03}", rob.num_free(), rob.capacity());
         }
 
         // -------------------------------------------------------
@@ -97,62 +108,63 @@ fn main() {
         // -------------------------------------------------------
         // Decode stage
         {
-            let mut iq = pq_iq.borrow_mut();
+            let mut idq = q_idq.borrow_mut();
             let mut ibq = q_ibq.borrow_mut();
-            let iq_max = iq.num_in();
-            println!("[ID] iq_max = {}", iq_max);
             let decode_stall = {
                 ibq.is_empty() ||
-                iq.is_full()
+                idq.is_full()
             };
             if !decode_stall {
                 let fr: &FetchResp = ibq.output().unwrap();
                 let dw: [u32; 8] = unsafe { std::mem::transmute(fr.data) };
-                let mut out = Packet::<DecodeOut, 8>::new();
-                for idx in 0..iq_max {
-                    let instr_off = idx * 4;
-                    let instr_pc  = fr.pc.wrapping_add(instr_off as u32);
-                    let instr     = Rv32::decode(dw[idx]);
-                    out[idx]      = DecodeOut { pc: instr_pc, instr };
-                }
-                out.dump("decode window");
-                if iq_max == 8 {
-                    ibq.pop();
-                    iq.push(out);
-                } else if iq_max < 8 {
-                    unimplemented!();
-                } else { 
-                    panic!();
+                let mut out = DecodeOut { 
+                    pc: fr.pc,
+                    instr: [Instr::Illegal(0xdeadc0de); 8] 
+                };
+                for idx in 0..8 {
+                    out.instr[idx] = Rv32::decode(dw[idx]);
                 }
             } else {
-                iq.push(Packet::new());
                 println!("[ID] Stalled");
             }
         }
 
         // -------------------------------------------------------
-        // Rename stage (resource allocation)
+        // Dispatch stage (resource allocation)
         {
             let mut frl = m_frl.borrow_mut();
-            let mut iq  = pq_iq.borrow_mut();
-            let rename_stall = {
-                frl.is_full() || 
-                iq.is_empty()
-            };
+            let mut idq  = q_idq.borrow_mut();
+            let mut sch = m_sch.borrow_mut();
+            let mut rob = m_rob.borrow_mut();
+            let window  = idq.output();
 
-            if !rename_stall {
-                let window  = iq.output();
-                let frl_out = frl.output();
-                window.dump("rename window");
-                frl_out.dump("freelist output");
+            let preg_free = frl.num_free();
+            let sch_free  = sch.num_free();
+            let rob_free  = rob.num_free();
 
-                let num_preg_allocs = window.iter().enumerate()
-                    .filter(|(idx, x)| x.instr.rd().is_some())
-                    .map(|(idx, x)| idx).count();
-
-            } else {
-                println!("[RN] Rename stall");
+            //window.dump("dispatch window");
+            let mut num_preg_req = 0;
+            let mut num_sch_req  = 0;
+            let mut num_rob_req  = 0;
+            let mut window_size  = 0;
+            for (idx, entry) in window.valid_iter().enumerate() {
+                let p_req = entry.instr.num_preg_allocs();
+                let s_req = entry.instr.num_sch_allocs();
+                let r_req = 1;
+                if num_rob_req + r_req  >= rob_free  { break; }
+                if num_preg_req + p_req >= preg_free { break; }
+                if num_sch_req + s_req  >= sch_free  { break; }
+                num_rob_req  += r_req;
+                num_preg_req += p_req;
+                num_sch_req  += s_req;
+                window_size  += 1;
             }
+            println!("[DS] Can dispatch {} entries", window_size);
+
+            idq.consume(window_size);
+
+            sch.push(Packet::new());
+            rob.push(Packet::new());
         }
  
         d.update();

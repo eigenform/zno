@@ -5,11 +5,15 @@ use crate::packet::*;
 use crate::uarch::*;
 use crate::prim::*;
 
-pub struct IntegerScheduler<const CAP: usize, const ISIZE: usize> {
-    data: VecDeque<IntegerUop>,
-    input: Option<Packet<IntegerUop, ISIZE>>,
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RobEntry {
 }
-impl <const CAP: usize, const ISIZE: usize> IntegerScheduler<CAP, ISIZE> {
+
+pub struct ReorderBuffer<const CAP: usize, const ISIZE: usize> {
+    data: VecDeque<RobEntry>,
+    input: Option<Packet<RobEntry, ISIZE>>,
+}
+impl <const CAP: usize, const ISIZE: usize> ReorderBuffer<CAP, ISIZE> {
     pub fn new() -> Self { 
         Self { 
             data: VecDeque::new(),
@@ -17,14 +21,14 @@ impl <const CAP: usize, const ISIZE: usize> IntegerScheduler<CAP, ISIZE> {
         }
     }
 
-    pub fn push(&mut self, p: Packet<IntegerUop, ISIZE>) {
+    pub fn push(&mut self, p: Packet<RobEntry, ISIZE>) {
         self.input = Some(p);
     }
 
 }
 
 impl <const CAP: usize, const ISIZE: usize> Storage<CAP, ISIZE>
-    for IntegerScheduler<CAP, ISIZE> 
+    for ReorderBuffer<CAP, ISIZE> 
 {
     fn num_used(&self) -> usize {
         self.data.len()
@@ -33,9 +37,9 @@ impl <const CAP: usize, const ISIZE: usize> Storage<CAP, ISIZE>
 
 
 impl <const CAP: usize, const ISIZE: usize> Clocked 
-    for IntegerScheduler<CAP, ISIZE> 
+    for ReorderBuffer<CAP, ISIZE> 
 {
-    fn name(&self) -> &str { "sch" }
+    fn name(&self) -> &str { "rob" }
     fn update(&mut self) {
         if let Some(input) = &self.input {  
             assert!(self.num_free() >= input.valid_len());
@@ -44,7 +48,7 @@ impl <const CAP: usize, const ISIZE: usize> Clocked
             }
             self.input = None;
         } else { 
-            unreachable!("IntegerScheduler had no input driven this cycle?");
+            unreachable!("ReorderBuffer had no input driven this cycle?");
         }
         self.data.make_contiguous();
 

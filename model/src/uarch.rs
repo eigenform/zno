@@ -27,3 +27,7 @@ pub struct IntegerUop {
 }
 
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MicroOp {
+
+}

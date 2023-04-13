@@ -3,31 +3,44 @@ use crate::state::*;
 use crate::rv32i::*;
 
 #[derive(Clone, Copy, Debug)]
-pub struct FetchRequest {
-    /// The next program counter value associated with this request
-    pub npc: u32,
+pub struct FetchTarget {
+    pub pc: u32,
 }
-impl FetchRequest { 
-    pub fn new(npc: u32) -> Self { 
-        assert!((npc & 0x0000_0003) == 0);
-        Self { npc }
+impl FetchTarget { 
+    pub fn new(pc: u32) -> Self { 
+        assert!((pc & 0x0000_0003) == 0);
+        Self { pc }
     }
-    /// Return the L1I-aligned fetch block address for this request.
-    pub fn fetch_addr(&self) -> u32 { 
-        self.npc & !0x0000_001f
+    pub fn aligned_addr(&self) -> u32 { 
+        self.pc & !0x0000_001f
     }
-
-    /// The offset (in bytes) to the first decoded instruction.
-    pub fn offset(&self) -> u32 {
-        self.npc & 0x0000_001f
-    }
-
 }
-impl Default for FetchRequest { 
+impl Default for FetchTarget { 
     fn default() -> Self { 
-        Self { npc: 0xdeadc0de }
+        Self { pc: 0xdeadc0de }
     }
 }
+
+pub struct FetchBlock {
+    addr: u32,
+    data: [u8; 32],
+}
+
+impl FetchBlock {
+    pub fn new(addr: u32, data: [u8; 32]) -> Self {
+        assert!((addr & 0x0000_001f) == 0);
+        Self { addr, data }
+    }
+    pub fn iter_words(&self) -> impl Iterator<Item=&u32> {
+        let data: &[u32; 8] = unsafe { 
+            std::mem::transmute(&self.data)
+        };
+        data.iter()
+    }
+
+}
+
+
 
 
 
