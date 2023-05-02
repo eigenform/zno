@@ -48,11 +48,13 @@ out-of-order scheduling and execution in the backend.
 
 In general, renaming involves the following steps:
 
-1. Determine which operands resolve to zero
+1. Determine which operands resolve to known values (ie. zero)
 2. Determine which instructions are non-scheduled
 3. Determine which instructions allocate a new physical register
-4. Resolve "local" physical dependences by forwarding newly-allocated registers
-5. Resolve "global" physical dependences by reading from the register map
+4. Resolve "local" physical dependences (solely between instructions within 
+   the window) by forwarding newly-allocated registers
+5. Resolve "global" physical dependences (between instructions in the window
+   and older instructions in the pipeline) by reading from the register map
 6. Write back to the freelist and the register map
 
 Some macro-ops can be completed early during this stage by simply writing to 
