@@ -1,17 +1,16 @@
-// See README.md for license details.
-
 ThisBuild / scalaVersion     := "2.13.7"
 ThisBuild / version          := "0.1.0"
 ThisBuild / organization     := "eigenform"
 
-val chiselVersion = "3.5.6"
+val chiselVersion = "3.6.0"
+val chiseltestVersion = "0.6.0"
 
 lazy val root = (project in file("."))
   .settings(
     name := "zno",
     libraryDependencies ++= Seq(
       "edu.berkeley.cs" %% "chisel3" % chiselVersion,
-      "edu.berkeley.cs" %% "chiseltest" % "0.5.4",
+      "edu.berkeley.cs" %% "chiseltest" % chiseltestVersion,
     ),
     scalacOptions ++= Seq(
       "-language:reflectiveCalls",

@@ -11,24 +11,9 @@ import zno.common._
 import zno.riscv.isa._
 import zno.core.uarch._
 
-// Reorder buffer allocation port.
-class ROBAllocPort(implicit p: ZnoParam) extends Bundle {
-  val rd  = Input(UInt(p.awidth.W))
-  val pd  = Input(UInt(p.pwidth.W))
-  val en  = Input(Bool())
-  val idx = Output(Valid(UInt(p.robwidth.W)))
-}
-
-// Reorder buffer entry write port.
-class ROBWritePort(implicit p: ZnoParam) extends Bundle {
-  val idx = Input(UInt(p.robwidth.W))
-  val en  = Input(Bool())
-}
-
 class ReorderBuffer(implicit p: ZnoParam) extends Module {
-  val num_free = IO(Output(UInt(log2Ceil(p.rob_sz+1).W)))
-  num_free := p.rob_sz.U
-
+  //val num_free = IO(Output(UInt(log2Ceil(p.rob_sz+1).W)))
+  //num_free := p.rob_sz.U
   //val io = IO(new Bundle {
   //  val ap = Vec(1, new ROBAllocPort)
   //  val wp = Vec(1, new ROBWritePort)

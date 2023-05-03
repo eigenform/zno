@@ -20,22 +20,23 @@ class ZnoCore extends Module {
   val io = IO(new Bundle {
     // Connection from the frontend to some external memory
     val ibus  = new ZnoInstBusIO
+
+    val npc  = Flipped(Decoupled(p.ProgramCounter()))
+    val dbg_int_disp = new IntegerDispatchIO
   })
 
   // This seems like a reasonable way of slicing things up. 
   val fc = Module(new ZnoFrontcore)
   val mc = Module(new ZnoMidcore)
-  val bc = Module(new ZnoBackcore)
-
-
-  val opq = Module(new Queue(new zno.core.front.decode.DecodeBlock, p.opq_sz))
+  //val bc = Module(new ZnoBackcore)
 
   fc.io.ibus    <> io.ibus
-  fc.io.ftq_in  <> DontCare
+  fc.io.npc     <> io.npc
+  fc.io.dblk    <> mc.io.dblk
 
-  fc.io.opq     <> opq.io.enq
-  mc.io.opq     <> opq.io.deq
+  mc.io.int_disp <> io.dbg_int_disp // FIXME
 
 }
+
 
 

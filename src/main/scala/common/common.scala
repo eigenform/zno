@@ -20,7 +20,7 @@ object ChainedPriorityEncoderOH {
     val res  = Wire(Vec(width, UInt(value.getWidth.W)))
     var mask = value
     for (i <- 0 until width) {
-      res(i) := PriorityEncoderOH(mask)
+      res(i) := ReduceTreePriorityEncoder(mask)
       mask    = mask & ~res(i)
     }
     res
@@ -59,4 +59,30 @@ object ReduceTree {
     }
   }
 }
+
+object ReduceTreePriorityMux {
+  def apply[T <: Data](in: Seq[(Bool, T)]): T = {
+    ReduceTree(in, (x: (Bool, T), y: (Bool, T)) => {
+      val sel_x    = x._1
+      val sel_y    = y._1
+      val val_x    = x._2
+      val val_y    = y._2
+      val sel_next = (sel_x || sel_y)
+      (sel_next, Mux(sel_x, val_x, val_y))
+    })._2
+  }
+  def apply[T <: Data](sel: Seq[Bool], in: Seq[T]): T = apply(sel zip in)
+  def apply[T <: Data](sel: Bits, in: Seq[T]): T = {
+    apply((0 until in.size).map(sel(_)), in)
+  }
+}
+
+object ReduceTreePriorityEncoder {
+  def apply(in: Seq[Bool]): UInt = {
+    ReduceTreePriorityMux(in, (0 until in.size).map(_.asUInt))
+  }
+  def apply(in: Bits): UInt = apply(in.asBools)
+}
+
+
 

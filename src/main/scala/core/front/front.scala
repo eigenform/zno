@@ -11,92 +11,67 @@ import zno.common._
 import zno.riscv.isa._
 import zno.core.uarch._
 
-import zno.core.front.cfm._
-import zno.core.front.fetch._
 import zno.core.front.predecode._
 import zno.core.front.decode._
 
-// Connection between the frontcore and instruction memories
-class ZnoInstBusIO(implicit p: ZnoParam) extends Bundle {
-  val req  = Decoupled(p.FetchBlockAddress())
-  val resp = Flipped(Decoupled(new FetchBlock))
-}
 
-// A block of fetched bytes. 
-class FetchBlock(implicit p: ZnoParam) extends Bundle {
-  // The address of this block
-  val addr = p.FetchBlockAddress()
-  // Fetched bytes in this block
-  val data = p.FetchBlockData()
-  // Default values
-  def drive_defaults(): Unit = {
-    this.addr := 0.U
-    this.data := 0.U.asTypeOf(p.FetchBlockData())
-  }
-}
-
-
-class PredictionChecker(implicit p: ZnoParam) extends Module {
+class FetchUnit(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle {
+    val ibus = new ZnoInstBusIO
+    val ftgt = Flipped(Decoupled(p.FetchBlockAddr()))
+    val fblk = Decoupled(new FetchBlock)
   })
+
+  val ftq = Module(new Queue(p.FetchBlockAddr(), p.ftq_sz))
+  ftq.io.enq <> io.ftgt
+
+  io.ibus.req.valid := ftq.io.deq.valid
+  io.ibus.req.bits  := ftq.io.deq.bits
+  ftq.io.deq.ready  := io.ibus.resp.fire
+
+  io.fblk <> io.ibus.resp
 }
+
+class DecodeUnit(implicit p: ZnoParam) extends Module {
+  val io = IO(new Bundle {
+    val fblk = Flipped(Decoupled(new FetchBlock))
+    val dblk = Decoupled(new DecodeBlock)
+  })
+
+  val dec = Seq.fill(p.dec_bw)(Module(new UopDecoder))
+
+  val fbq = Module(new Queue(new FetchBlock, p.fbq_sz))
+  fbq.io.enq <> io.fblk
+
+  for (idx <- 0 until p.dec_bw) {
+    dec(idx).inst          := fbq.io.deq.bits.data(idx)
+    io.dblk.bits.data(idx) := dec(idx).out
+  }
+  io.dblk.bits.addr := fbq.io.deq.bits.addr
+  io.dblk.valid    := fbq.io.deq.valid
+  fbq.io.deq.ready := io.dblk.ready
+
+}
+
 
 // The front-end of the machine.
 class ZnoFrontcore(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle {
-    // Connection to instruction memory
     val ibus = new ZnoInstBusIO
-
-    // FIXME: Input fetch target address feeding the FTQ
-    val ftq_in  = Flipped(Decoupled(p.FetchBlockAddress()))
-
-    val opq = Decoupled(new DecodeBlock)
-
-    val dbg_pd_uop = Output(Vec(p.id_width, new PdUop))
+    val npc  = Flipped(Decoupled(p.ProgramCounter()))
+    val dblk = Decoupled(new DecodeBlock)
   })
 
-  // "Fetch target queue" 
-  // Holds fetch block addresses until the fetch unit is ready.
-  // FIXME: FTQ input is driven outside this module
-  val ftq = Module(new Queue(p.FetchBlockAddress(), p.ftq_sz))
-  ftq.io.enq <> io.ftq_in
-
-  // "Fetch block queue"
-  // Holds fetch blocks until the decode unit is ready
-  val fbq = Module(new Queue(new FetchBlock, p.fbq_sz))
-
-  // "Instruction fetch unit" 
-  // Fetch targets flow into the IFU from the FTQ.
   val ifu = Module(new FetchUnit)
-  ifu.io.tgt_in <> ftq.io.deq
-  ifu.io.ibus   <> io.ibus
+  ifu.io.ibus <> io.ibus
+  ifu.io.ftgt.bits  := p.FetchBlockAddr.from_pc(io.npc.bits)
+  ifu.io.ftgt.valid := io.npc.valid
+  io.npc.ready      := ifu.io.ftgt.ready
 
-  // When an IFU response is available, the fetch block is (a) driven to the 
-  // FBQ, and (b) captured by registers used for predecode. 
-
-  val s1_vld = RegNext(ifu.io.blk_out.fire)
-  val s1_reg = RegEnable(ifu.io.blk_out.bits, ifu.io.blk_out.fire)
-  fbq.io.enq.valid     := ifu.io.blk_out.valid
-  fbq.io.enq.bits      := ifu.io.blk_out.bits
-  ifu.io.blk_out.ready := fbq.io.enq.ready && !s1_vld
-
-  // "Predecode units"
-  // Predecode each instruction word in a fetch block. 
-
-  val pdu  = Seq.fill(p.id_width)(Module(new Predecoder))
-  val s2_reg = RegInit(0.U.asTypeOf(Vec(p.id_width, new PdUop)))
-  val s2_vld = RegNext(s1_vld)
-  for (i <- 0 until p.id_width) {
-    pdu(i).io.opcd := s1_reg.data(i)
-    s2_reg(i)   := pdu(i).io.out
-  }
-  io.dbg_pd_uop := s2_reg
-
-  // "Decode unit"
-  // Decoded instructions flow into the OPQ (outside this module)
   val idu = Module(new DecodeUnit)
-  idu.io.fbq <> fbq.io.deq
-  idu.io.opq <> io.opq
+  idu.io.fblk <> ifu.io.fblk
+  idu.io.dblk <> io.dblk
+
 
 }
 

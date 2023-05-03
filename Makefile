@@ -6,4 +6,3 @@ rtl:
 test:
 	sbt "testOnly RvSpec"
 	#sbt test
-

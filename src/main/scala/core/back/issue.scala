@@ -10,7 +10,7 @@ import zno.core.uarch._
 import zno.common._
 
 class WakeupReadPort(implicit p: ZnoParam) extends Bundle {
-  val prn = Input(UInt(p.pwidth.W))
+  val prn = Input(p.Prn())
   val rdy = Output(Bool())
 }
 
@@ -20,7 +20,7 @@ class IssueWakeupArray(implicit p: ZnoParam) extends Module {
   })
 
   // A vector of bits (one for each physical register number)
-  val arr = UInt(p.num_preg.W)
+  val arr = UInt(p.prf_sz.W)
 
   for (rp <- io.rp) {
     val prn_oh = UIntToOH(rp.prn)
