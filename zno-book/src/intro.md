@@ -14,8 +14,8 @@ of the problems involved in the design of modern machines.
 
 The `ZNO` core is split into three pieces:
 
-- The **frontcore** (for dealing with control-flow)
-- The **midcore** (for managing state)
-- The **backcore** (for dealing with data-flow)
+- The [frontend](./front/frontend.md) (for dealing with control-flow)
+- The [midcore](./mid/midcore.md) (for managing state)
+- The [backend](./back/backend.md) (for dealing with data-flow)
 
 ![Diagram](./img/zno_core-overview.png)

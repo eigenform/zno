@@ -1,31 +1,4 @@
-# ZNO Midcore
-
-```admonish note
-Currently, this page describes renaming for integer operations only. 
-```
-
-## Freelist
-
-A **freelist** stores the set of physical registers that are available for
-allocation. 
-There is one read port for each entry in the decode window.
-The index of a free physical register is always being driven over the read
-port (if a register is available), along with a `valid` bit.
-When the `alloc` bit on a read port is held high, the corresponding physical
-register is marked as in-use starting on the next clock cycle. 
-
-## Register Map
-
-A **register map** associates a physical register to each architectural 
-register (excluding the zero register `x0`). There are two read ports and 
-one write port for each entry in the decode window. 
-
-The register map also tracks which architectural registers are bound to the 
-physical register 0. Each write port has a comparator used to determine 
-how the zero bit should be updated along with the binding. 
-These status bits are always driven as output.
-
-## Register Rename
+# Register Renaming
 
 ```admonish info title="Abstract Nonsense"
 Without aliasing between architectural storage locations, a set of 
@@ -39,7 +12,7 @@ this property.
 If you're familiar with the way that modern compilers are implemented, you 
 might know that programs are often represented in **single-static assignment** 
 (SSA) form. The rationale behind register renaming is very similar, although
-we don't exactly have an *infinite* amount of registers ...
+we don't exactly have an *infinite* amount of registers. 
 ```
 
 The register map and freelist are both used to rename architectural operands 
@@ -143,4 +116,24 @@ There are two possible interactions with the register map write ports:
    physical source register 
 
 
+## Freelist
+
+A **freelist** stores the set of physical registers that are available for
+allocation. 
+There is one read port for each entry in the decode window.
+The index of a free physical register is always being driven over the read
+port (if a register is available), along with a `valid` bit.
+When the `alloc` bit on a read port is held high, the corresponding physical
+register is marked as in-use starting on the next clock cycle. 
+
+## Register Map
+
+A **register map** associates a physical register to each architectural 
+register (excluding the zero register `x0`). There are two read ports and 
+one write port for each entry in the decode window. 
+
+The register map also tracks which architectural registers are bound to the 
+physical register 0. Each write port has a comparator used to determine 
+how the zero bit should be updated along with the binding. 
+These status bits are always driven as output.
 
