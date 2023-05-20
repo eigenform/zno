@@ -14,14 +14,14 @@ import zno.core.uarch._
 class ZeroPropagationUnit(implicit p: ZnoParam) extends Module { 
   val io = IO(new Bundle {
     // List of known-zero architectural registers
-    val map_zero = Input(Vec(p.num_areg, Bool()))
+    val map_zero = Input(Vec(p.arf.size, Bool()))
 
-    val in_mops  = Input(Vec(p.dec_bw, new MacroOp))
-    val out_mops = Output(Vec(p.dec_bw, new MacroOp))
+    val in_mops  = Input(Vec(p.dec_win.size, new MacroOp))
+    val out_mops = Output(Vec(p.dec_win.size, new MacroOp))
   })
 
   io.out_mops := io.in_mops
-  for (idx <- 0 until p.dec_bw) {
+  for (idx <- 0 until p.dec_win.size) {
     val rs1  = io.in_mops(idx).rs1
     val rs2  = io.in_mops(idx).rs2
     val src1 = io.in_mops(idx).src1

@@ -1,59 +1,80 @@
 package zno.elab
 
 import chisel3._
+import circt.stage.{ChiselStage, FirtoolOption}
 
-object VerilogEmitter extends App {
-  implicit val p = zno.core.uarch.ZnoParam()
-  val emitter_args = Array("-td", "rtl")
-
-  println("ZNO Core parameters")
-  println("===========================")
-  println("prf_sz:      " + p.prf_sz)
-  println("dec_bw:      " + p.dec_bw)
-
-  //println("Uop          bits: " + new zno.core.uarch.Uop().getWidth)
-  //println("IntUop       bits: " + new zno.core.uarch.IntUop().getWidth)
-  //println("StUop        bits: " + new zno.core.uarch.StUop().getWidth)
-  //println("LdUop        bits: " + new zno.core.uarch.LdUop().getWidth)
-  //println("BrnUop       bits: " + new zno.core.uarch.BrnUop().getWidth)
-  //println("JmpUop       bits: " + new zno.core.uarch.JmpUop().getWidth)
-  //println("MacroOp      bits: " + new zno.core.uarch.MacroOp().getWidth)
-  //println("PdUop        bits: " + new zno.core.front.predecode.PdUop().getWidth)
-
-  //println("ZnoUop bits: " + zno.core.uarch.ZnoUop.width)
-  println("===========================")
-
-  //(new chisel3.stage.ChiselStage)
-  //  .emitVerilog(new zno.axi_periph.simple.SimpleDeviceTop(), emitter_args)
-  //(new chisel3.stage.ChiselStage)
-  //  .emitVerilog(new zno.riscv.decode.DecodeUnit(), emitter_args)
-  //(new chisel3.stage.ChiselStage)
-  //  .emitVerilog(new zno.riscv.hart.Hart(), emitter_args)
-  //(new chisel3.stage.ChiselStage)
-  //  .emitVerilog(new zno.riscv.top.Top(), emitter_args)
-  //(new chisel3.stage.ChiselStage)
-  //  .emitVerilog(new zno.pipeline_tests.PipelineModelO3(), emitter_args)
-
-  //(new chisel3.stage.ChiselStage)
-  //  .emitVerilog(new zno.common.DecouplingFIFO(UInt(8.W), width=4, entries=32),
-  //    emitter_args)
- 
-  //(new chisel3.stage.ChiselStage)
-  //  .emitVerilog(new zno.core.dispatch.DispatchStage(), emitter_args)
- 
-  //(new chisel3.stage.ChiselStage)
-  //  .emitVerilog(new zno.core.front.decode.UopDecoder(), emitter_args)
-
-  //(new chisel3.stage.ChiselStage)
-  //  .emitVerilog(new zno.core.front.decode.DecodeStage(), emitter_args)
-
-  (new chisel3.stage.ChiselStage)
-    .emitVerilog(new zno.core.front.ZnoFrontcore(), emitter_args)
-
-  (new chisel3.stage.ChiselStage)
-    .emitVerilog(new zno.core.ZnoCore(), emitter_args)
+object Emitter {
+  def apply(gen: => RawModule) = {
+    //val firtoolOpts: Array[String] = Array(
+    //  "--disable-all-randomization",
+    //  "--preserve-values=named",
+    //  "--strip-debug-info",
+    //  "--strip-fir-debug-info",
+    //)
 
 
+    (new ChiselStage).execute(
+      Array("--target-dir", "rtl"),
+      Seq(
+        chisel3.stage.ChiselGeneratorAnnotation(() => gen),
+        circt.stage.CIRCTTargetAnnotation(circt.stage.CIRCTTarget.CHIRRTL),
+      )
+    )
+
+    (new ChiselStage).execute(
+      Array("--target-dir", "rtl"),
+      Seq(
+        chisel3.stage.ChiselGeneratorAnnotation(() => gen),
+        circt.stage.CIRCTTargetAnnotation(circt.stage.CIRCTTarget.SystemVerilog),
+        FirtoolOption("--disable-all-randomization"),
+      )
+    )
 
 
+  }
 }
+
+
+object Elaborate extends App {
+  implicit val p = zno.core.uarch.ZnoParam()
+
+  def print_width_bundle[T <: Bundle](ty: T) = {
+    val name = ty.className
+    val width = ty.getWidth
+    //val width_kb = width.toFloat / 1024.toFloat
+    println(f"${name}%16s: ${width}%db")
+  }
+
+  def print_width_arr[T <: Data](name: String, capacity: Int, ty: T) = {
+    val width = ty.getWidth
+    val size_b = width * capacity
+    val size_kb = size_b.toFloat / 1024.toFloat
+    println(f"${name}%16s: ${size_kb}%.2fkb")
+  }
+
+  println("============================================")
+  println("ZnoParam bundle sizes: ")
+  print_width_bundle(new zno.core.uarch.FetchBlock())
+  print_width_bundle(new zno.core.uarch.PredecodeBlock())
+  print_width_bundle(new zno.core.uarch.DecodeBlock())
+  print_width_bundle(new zno.core.uarch.MacroOp())
+  print_width_bundle(new zno.core.uarch.IntUop())
+  print_width_bundle(new zno.core.uarch.BrnUop())
+  print_width_bundle(new zno.core.uarch.JmpUop())
+  print_width_bundle(new zno.core.uarch.LdUop())
+  print_width_bundle(new zno.core.uarch.StUop())
+
+  println("")
+  println("Approximate structure sizes: ")
+  print_width_arr("FBQ", p.fbq.size, new zno.core.uarch.FetchBlock())
+  print_width_arr("DBQ", p.dbq.size, new zno.core.uarch.DecodeBlock())
+  print_width_arr("CFM tags", p.cfm.size, new zno.core.uarch.FetchBlockAddr)
+  print_width_arr("CFM pdblk", p.cfm.size, new zno.core.uarch.PredecodeBlock())
+  println("============================================")
+
+
+  Emitter(new zno.core.front.ZnoFrontcore)
+}
+
+
+

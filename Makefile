@@ -2,7 +2,7 @@
 clean:
 	rm rtl/*
 rtl:
-	sbt 'runMain zno.elab.VerilogEmitter'
+	sbt 'runMain zno.elab.Elaborate'
 test:
 	sbt "testOnly RvSpec"
 	#sbt test

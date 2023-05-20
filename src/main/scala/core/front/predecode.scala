@@ -1,5 +1,5 @@
 
-package zno.core.front.predecode
+package zno.core.front
 
 import chisel3._
 import chisel3.util._

@@ -21,7 +21,6 @@ class ZnoCore extends Module {
     // Connection from the frontend to some external memory
     val ibus  = new ZnoInstBusIO
 
-    val npc  = Flipped(Decoupled(p.ProgramCounter()))
     val dbg_int_disp = new IntegerDispatchIO
   })
 
@@ -31,7 +30,6 @@ class ZnoCore extends Module {
   //val bc = Module(new ZnoBackcore)
 
   fc.io.ibus    <> io.ibus
-  fc.io.npc     <> io.npc
   fc.io.dblk    <> mc.io.dblk
 
   mc.io.int_disp <> io.dbg_int_disp // FIXME

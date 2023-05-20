@@ -20,7 +20,7 @@ class IssueWakeupArray(implicit p: ZnoParam) extends Module {
   })
 
   // A vector of bits (one for each physical register number)
-  val arr = UInt(p.prf_sz.W)
+  val arr = UInt(p.prf.size.W)
 
   for (rp <- io.rp) {
     val prn_oh = UIntToOH(rp.prn)

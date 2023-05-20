@@ -54,12 +54,12 @@ class IntegerMovDetector(implicit p: ZnoParam) extends Module {
 // Unit containing all logic for detecting non-scheduled instructions. 
 class NonscheduledOpDetector(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle { 
-    val in_mops  = Input(Vec(p.dec_bw, new MacroOp))
-    val out_mops = Output(Vec(p.dec_bw, new MacroOp))
+    val in_mops  = Input(Vec(p.dec_win.size, new MacroOp))
+    val out_mops = Output(Vec(p.dec_win.size, new MacroOp))
   })
 
-  val movdet = Seq.fill(p.dec_bw)(Module(new IntegerMovDetector))
-  for (i <- 0 until p.dec_bw) {
+  val movdet = Seq.fill(p.dec_win.size)(Module(new IntegerMovDetector))
+  for (i <- 0 until p.dec_win.size) {
     movdet(i).io.in_mop := io.in_mops(i)
     io.out_mops(i)      := movdet(i).io.out_mop
   }

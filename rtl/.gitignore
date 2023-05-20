@@ -1,3 +1,5 @@
 *.v
 *.json
+*.sv
 *.fir
+*.mlir

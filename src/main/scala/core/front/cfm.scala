@@ -1,9 +1,8 @@
-//package zno.core.front.cfm
+package zno.core.front
 
 import chisel3._
 import chisel3.util._
 import chisel3.experimental.BundleLiterals._
-import chisel3.experimental.ChiselEnum
 import chisel3.util.experimental.decode
 
 import zno.common._
@@ -37,25 +36,34 @@ import zno.core.uarch._
 //  val inst = Vec(p.fblk_sz_w, new CfmInstInfo)
 //
 //}
-//
-//class ControlFlowMap(
-//  num_rp: Int = 2, 
-//  num_wp: Int = 1
-//)(implicit p: ZnoParam) extends Module 
-//{
-//  val io = IO(new Bundle {
-//    val rp = Vec(num_rp, new CfmReadPort)
-//    val wp = Vec(num_wp, new CfmWritePort)
-//  })
-//
-//  val map_v    = RegInit(Vec(p.cfm_sz, false.B))
-//  val map_data = Mem(p.cfm_sz, new CfmEntry)
-//  val map_tags = Mem(p.cfm_sz, p.FetchBlockAddress())
-//
-//  //for (ridx <- 0 until num_rp) {
-//  //  val hit_arr  = (0 until p.cfm_sz).map(i => io.rp.tag === map_tags(i))
-//  //}
-//}
+
+
+class ControlFlowMap(implicit p: ZnoParam) extends Module 
+{
+  val io = IO(new Bundle {
+    // Impinging architectural control-flow event
+    val arch_cfe = Flipped(Decoupled(new ArchitecturalCfEvent))
+    // Impinging speculative control-flow event
+    val spec_cfe = Flipped(Decoupled(new SpeculativeCfEvent))
+
+    // A newly-predecoded block
+    val pdblk   = Flipped(Decoupled(new PredecodeBlock))
+
+    // Connection to a queue of fetch targets
+    val ftgt = Decoupled(new FetchBlockAddr)
+  })
+
+  val tag_array = SyncReadMem(p.cfm.size, new FetchBlockAddr)
+
+  // FIXME
+  io.arch_cfe.ready := true.B
+  io.spec_cfe.ready := true.B
+  io.ftgt.valid := false.B
+  io.ftgt.bits  := DontCare
+  io.pdblk.ready := true.B
+
+
+}
 
 
 

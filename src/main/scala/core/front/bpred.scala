@@ -1,4 +1,4 @@
-package zno.core.front.bpred
+package zno.core.front
 
 import chisel3._
 import chisel3.util._
@@ -80,7 +80,7 @@ class GsharePredictor(
 {
   val io = IO(new Bundle {
     val in_ghist = Input(new HistoryVector(ghist_depth))
-    val in_pc    = Input(p.ProgramCounter())
+    val in_pc    = Input(new ProgramCounter)
   })
 
   val tagwidth: Int = log2Ceil(num_entries)
@@ -89,12 +89,19 @@ class GsharePredictor(
 
 
 // Top-level branch prediction unit. 
-// o
 class BranchPredictionUnit(
   // Depth of the global history register
   val ghist_depth: Int = 12,
 )(implicit p: ZnoParam) extends Module 
 {
+  val io = IO(new Bundle {
+    val spec_cfe = Decoupled(new SpeculativeCfEvent)
+  })
+
+  // FIXME
+  io.spec_cfe.bits := DontCare
+  io.spec_cfe.valid := false.B
+
   val ghr = RegInit(HistoryVector(ghist_depth))
 }
 

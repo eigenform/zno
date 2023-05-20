@@ -33,7 +33,7 @@ class RegisterFile(implicit p: ZnoParam) extends Module {
     val rp = Vec(2, new RfReadPort)
     val wp = Vec(3, new RfWritePort)
   })
-  val reg = SyncReadMem(p.prf_sz, UInt(32.W))
+  val reg = SyncReadMem(p.prf.size, UInt(32.W))
   for (wp <- io.wp)
     when (wp.en && wp.addr =/= 0.U) { 
       reg(wp.addr) := wp.data 

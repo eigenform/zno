@@ -38,9 +38,9 @@ import zno.core.uarch._
 //
 class LocalDependenceUnit(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle {
-    val mops = Input(Vec(p.dec_bw, new MacroOp))
-    val rs1_provider_idx = Output(Vec(p.dec_bw, Valid(p.MopIdx())))
-    val rs2_provider_idx = Output(Vec(p.dec_bw, Valid(p.MopIdx())))
+    val mops = Input(Vec(p.dec_win.size, new MacroOp))
+    val rs1_provider_idx = Output(Vec(p.dec_win.size, Valid(p.dec_win.idx())))
+    val rs2_provider_idx = Output(Vec(p.dec_win.size, Valid(p.dec_win.idx())))
   })
 
   val mops     = io.mops
@@ -53,34 +53,34 @@ class LocalDependenceUnit(implicit p: ZnoParam) extends Module {
 
   // For each [consumer] op, a bitvector indicating which *previous* ops in 
   // the group are candidate "providers" for rs{1,2} physical names
-  val rs1_match       = Wire(Vec(p.dec_bw, Vec(p.dec_bw, Bool())))
-  val rs2_match       = Wire(Vec(p.dec_bw, Vec(p.dec_bw, Bool())))
-  for (i <- 0 until p.dec_bw) {
-    for (j <- 0 until p.dec_bw) {
+  val rs1_match       = Wire(Vec(p.dec_win.size, Vec(p.dec_win.size, Bool())))
+  val rs2_match       = Wire(Vec(p.dec_win.size, Vec(p.dec_win.size, Bool())))
+  for (i <- 0 until p.dec_win.size) {
+    for (j <- 0 until p.dec_win.size) {
       rs1_match(i)(j) := false.B
       rs2_match(i)(j) := false.B
     }
   }
 
   // For each [consumer] op, does a "provider" exist for rs{1,2}?
-  val rs1_match_exists = Wire(Vec(p.dec_bw, Bool()))
-  val rs2_match_exists = Wire(Vec(p.dec_bw, Bool()))
-  for (i <- 0 until p.dec_bw) {
+  val rs1_match_exists = Wire(Vec(p.dec_win.size, Bool()))
+  val rs2_match_exists = Wire(Vec(p.dec_win.size, Bool()))
+  for (i <- 0 until p.dec_win.size) {
     rs1_match_exists(i) := false.B
     rs2_match_exists(i) := false.B
   }
 
   // For each [consumer] op, the index of the "provider" for rs{1,2}
-  val rs1_match_idx   = Wire(Vec(p.dec_bw, p.MopIdx()))
-  val rs2_match_idx   = Wire(Vec(p.dec_bw, p.MopIdx()))
-  for (i <- 0 until p.dec_bw) {
+  val rs1_match_idx   = Wire(Vec(p.dec_win.size, p.dec_win.idx()))
+  val rs2_match_idx   = Wire(Vec(p.dec_win.size, p.dec_win.idx()))
+  for (i <- 0 until p.dec_win.size) {
     rs1_match_idx(i) := 0.U
     rs2_match_idx(i) := 0.U
   }
 
   // FIXME: Perhaps there's a clearer way to write this..
-  for (prv_idx <- 0 until p.dec_bw-1) {
-    for (src_idx <- prv_idx+1 until p.dec_bw) {
+  for (prv_idx <- 0 until p.dec_win.size-1) {
+    for (src_idx <- prv_idx+1 until p.dec_win.size) {
       val has_rr    = (mop_rr(prv_idx))
       val has_rs1   = (mop_src1(src_idx) === SrcType.S_REG)
       val has_rs2   = (mop_src2(src_idx) === SrcType.S_REG)
@@ -94,7 +94,7 @@ class LocalDependenceUnit(implicit p: ZnoParam) extends Module {
       rs2_match_idx(src_idx) := ReduceTreePriorityEncoder(rs2_match(src_idx))
     }
   }
-  (0 until p.dec_bw).map(i => {
+  (0 until p.dec_win.size).map(i => {
     io.rs1_provider_idx(i).valid := rs1_match_exists(i)
     io.rs1_provider_idx(i).bits  := rs1_match_idx(i)
     io.rs2_provider_idx(i).valid := rs2_match_exists(i)
@@ -107,26 +107,26 @@ class LocalDependenceUnit(implicit p: ZnoParam) extends Module {
 class RegisterRenameUnit(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle { 
     // Input macro-ops
-    val mops  = Input(Vec(p.dec_bw, new MacroOp))
+    val mops  = Input(Vec(p.dec_win.size, new MacroOp))
 
     // Output physical register operands
-    val pd    = Output(Vec(p.dec_bw, p.Prn()))
-    val ps1   = Output(Vec(p.dec_bw, p.Prn()))
-    val ps2   = Output(Vec(p.dec_bw, p.Prn()))
+    val pd    = Output(Vec(p.dec_win.size, p.Prn()))
+    val ps1   = Output(Vec(p.dec_win.size, p.Prn()))
+    val ps2   = Output(Vec(p.dec_win.size, p.Prn()))
 
     // Physical registers available for allocation
-    val frl_alc  = Input(Vec(p.dec_bw, Valid(p.Prn())))
+    val frl_alc  = Input(Vec(p.dec_win.size, Valid(p.Prn())))
 
     // Register map read ports
-    val map_rp_rs1 = Flipped(Vec(p.dec_bw, new MapReadPort))
-    val map_rp_rs2 = Flipped(Vec(p.dec_bw, new MapReadPort))
+    val map_rp_rs1 = Flipped(Vec(p.dec_win.size, new MapReadPort))
+    val map_rp_rs2 = Flipped(Vec(p.dec_win.size, new MapReadPort))
   })
   val mops = io.mops
 
   // Resolve "global" dependences with the register map read ports.
   val rs1_valid = mops.map(x => x.src1 === SrcType.S_REG)
   val rs2_valid = mops.map(x => x.src2 === SrcType.S_REG)
-  for (idx <- 0 until p.dec_bw) {
+  for (idx <- 0 until p.dec_win.size) {
     io.map_rp_rs1(idx).areg := Mux(rs1_valid(idx), mops(idx).rs1, 0.U)
     io.map_rp_rs2(idx).areg := Mux(rs2_valid(idx), mops(idx).rs2, 0.U)
   }
@@ -142,8 +142,8 @@ class RegisterRenameUnit(implicit p: ZnoParam) extends Module {
   // ports are always available on the same cycle. I'm not sure this is a 
   // reasonable assumption.
   //
-  val pd = Wire(Vec(p.dec_bw, p.Prn()))
-  for (idx <- 0 until p.dec_bw) {
+  val pd = Wire(Vec(p.dec_win.size, p.Prn()))
+  for (idx <- 0 until p.dec_win.size) {
     val mop    = mops(idx)
     val is_alc = mop.is_allocation()
     val is_mov = (mop.mov_ctl =/= MovCtl.NONE)
@@ -171,9 +171,9 @@ class RegisterRenameUnit(implicit p: ZnoParam) extends Module {
   val rs2_providers = dep.io.rs2_provider_idx
 
   // Resolve all of the physical source register names.
-  val ps1 = Wire(Vec(p.dec_bw, p.Prn()))
-  val ps2 = Wire(Vec(p.dec_bw, p.Prn()))
-  for (idx <- 0 until p.dec_bw) {
+  val ps1 = Wire(Vec(p.dec_win.size, p.Prn()))
+  val ps2 = Wire(Vec(p.dec_win.size, p.Prn()))
+  for (idx <- 0 until p.dec_win.size) {
     val rs1_provider_idx = rs1_providers(idx).bits
     val rs2_provider_idx = rs2_providers(idx).bits
     ps1(idx) := Mux(rs1_providers(idx).valid, 

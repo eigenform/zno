@@ -11,11 +11,11 @@ import zno.riscv.isa._
 import zno.core.uarch._
 
 class IntegerDispatchIO(implicit p: ZnoParam) extends Bundle {
-    val uops     = Decoupled(Vec(p.int_dis_width, Valid(new IntUop)))
-    val num_free = Input(UInt(log2Ceil(p.int_dis_width).W))
+    val uops     = Decoupled(Vec(p.int_disp_win.size, Valid(new IntUop)))
+    val num_free = Input(p.int_disp_win.idx())
     def drive_defaults(): Unit = { 
       this.uops.valid := false.B
-      for (idx <- 0 until p.int_dis_width) {
+      for (idx <- 0 until p.int_disp_win.size) {
         this.uops.bits(idx).valid := false.B
         this.uops.bits(idx).bits  := 0.U.asTypeOf(new IntUop)
       }
@@ -29,7 +29,7 @@ class IntegerDispatchQueue(implicit p: ZnoParam) extends Module {
 
   val q_valid = RegInit(Vec(8, false.B))
   val q_data  = RegInit(Vec(8, 0.U.asTypeOf(new IntUop)))
-  val num_free = RegInit(0.U.asTypeOf(UInt(log2Ceil(p.int_dis_width).W)))
+  val num_free = RegInit(0.U.asTypeOf(p.int_disp_win.idx()))
 
   num_free   := PopCount(q_valid)
   io.from_dis.num_free := num_free
@@ -71,7 +71,7 @@ class ZnoMidcore(implicit p: ZnoParam) extends Module {
   io.int_disp.drive_defaults()
 
   // Queue up macro-ops from decode
-  val dbq  = Module(new Queue(new DecodeBlock, p.dbq_sz))
+  val dbq  = Module(new Queue(new DecodeBlock, p.dbq.size))
   val dbq_mops = dbq.io.deq.bits.data
   dbq.io.enq <> io.dblk
   dbq.io.deq.ready := true.B // FIXME
@@ -109,7 +109,7 @@ class ZnoMidcore(implicit p: ZnoParam) extends Module {
   frl.io.alc_en := pd_alc
 
   // FIXME: Drive register map write ports
-  for (idx <- 0 until p.dec_bw) { 
+  for (idx <- 0 until p.dec_win.size) { 
     map.wp(idx).en := false.B
     map.wp(idx).rd := 0.U
     map.wp(idx).pd := 0.U

@@ -1,20 +1,20 @@
 
-package zno.core.mid.dispatch
-
-import chisel3._
-import chisel3.util._
-import chisel3.experimental.BundleLiterals._
-import chisel3.experimental.ChiselEnum
-import chisel3.util.experimental.decode
-
-import zno.common._
-import zno.riscv.isa._
-import zno.core.uarch._
+//package zno.core.mid.dispatch
+//
+//import chisel3._
+//import chisel3.util._
+//import chisel3.experimental.BundleLiterals._
+//import chisel3.experimental.ChiselEnum
+//import chisel3.util.experimental.decode
+//
+//import zno.common._
+//import zno.riscv.isa._
+//import zno.core.uarch._
 
 //// Logic responsible for determining the current dispatch window.
 //class DispatchWindowCtrl(implicit p: ZnoParam) extends Module {
 //  // Consumer interface to the micro-op queue
-//  val opq     = IO(new FIFOConsumerIO(new Uop, p.dec_bw))
+//  val opq     = IO(new FIFOConsumerIO(new Uop, p.dec_win.size))
 //
 //  // Signals carrying information about resource availability
 //  val rsrc    = IO(new Bundle {
@@ -27,12 +27,12 @@ import zno.core.uarch._
 //  })
 //
 //  // Output containing the current dispatch window
-//  val dis_pkt = IO(new Packet(new Uop, p.dec_bw))
+//  val dis_pkt = IO(new Packet(new Uop, p.dec_win.size))
 //
 //  // Determine how many micro-ops we can consume from the queue
-//  val rfl_free_tbl = (0 until p.dec_bw).map(i => (i.U < rsrc.rfl))
-//  val sch_free_tbl = (0 until p.dec_bw).map(i => (i.U < rsrc.sch))
-//  val rob_free_tbl = (0 until p.dec_bw).map(i => (i.U < rsrc.rob))
+//  val rfl_free_tbl = (0 until p.dec_win.size).map(i => (i.U < rsrc.rfl))
+//  val sch_free_tbl = (0 until p.dec_win.size).map(i => (i.U < rsrc.sch))
+//  val rob_free_tbl = (0 until p.dec_win.size).map(i => (i.U < rsrc.rob))
 //  val rr_req_tbl = opq.data.zipWithIndex.map({
 //    case (op,idx) => (op.rr && (idx.U < opq.len))
 //  })
@@ -40,7 +40,7 @@ import zno.core.uarch._
 //    //case (op,idx) => (op.schedulable() && (idx.U < opq.len))
 //    case (op,idx) => ((idx.U < opq.len))
 //  })
-//  val rb_req_tbl = (0 until p.dec_bw).map({
+//  val rb_req_tbl = (0 until p.dec_win.size).map({
 //    case (idx) => (idx.U < opq.len)
 //  })
 //  val rr_ok_tbl = (rr_req_tbl zip rfl_free_tbl) map {
@@ -62,7 +62,7 @@ import zno.core.uarch._
 //
 //  // The output dispatch window only contains micro-ops that are guaranteed
 //  // to be consumed/dispatched
-//  for (idx <- 0 until p.dec_bw) {
+//  for (idx <- 0 until p.dec_win.size) {
 //    when (idx.U < num_ok) {
 //      dis_pkt.data(idx) := opq.data(idx)
 //    } 
@@ -77,8 +77,8 @@ import zno.core.uarch._
 //// The dispatch stage, separating the front-end from the back-end. 
 //class DispatchStage(implicit p: ZnoParam) extends Module {
 //
-//  val opq     = IO(new FIFOConsumerIO(new Uop, p.dec_bw))
-//  val opq_w   = Wire(new FIFOProducerIO(new Uop, p.dec_bw))
+//  val opq     = IO(new FIFOConsumerIO(new Uop, p.dec_win.size))
+//  val opq_w   = Wire(new FIFOProducerIO(new Uop, p.dec_win.size))
 //  opq_w       <> opq
 //
 //  val rsrc    = IO(new Bundle { 
@@ -88,7 +88,7 @@ import zno.core.uarch._
 //    val rob_free = Input(UInt(log2Ceil(p.rob_sz+1).W))
 //  })
 //
-//  val rob_alc = IO(new Packet(new ROBEntry, p.dec_bw))
+//  val rob_alc = IO(new Packet(new ROBEntry, p.dec_win.size))
 //
 //  val dis_ctl = Module(new DispatchWindowCtrl)
 //  val rrn     = Module(new RegisterRename)
@@ -111,11 +111,11 @@ import zno.core.uarch._
 //
 //  // Renamed entries in the dispatch window are sent to the scheduler
 //  // and reorder buffer
-//  val rrn_pkt  = Wire(new Packet(new Uop, p.dec_bw))
+//  val rrn_pkt  = Wire(new Packet(new Uop, p.dec_win.size))
 //  rrn_pkt     := rrn.res
 //
 //  rob_alc.len := rrn_pkt.len
-//  for (idx <- 0 until p.dec_bw) {
+//  for (idx <- 0 until p.dec_win.size) {
 //    rob_alc.data(idx).rd   := rrn_pkt.data(idx).rd
 //    rob_alc.data(idx).pd   := rrn_pkt.data(idx).pd
 //    rob_alc.data(idx).done := false.B

@@ -82,7 +82,7 @@ class ImmediateExtractor(implicit p: ZnoParam) extends Module {
   val valid   = (ifmt =/= F_NA)
   val is_zero = Mux(valid, (imm === 0.U), true.B)
   val immlen  = Mux(is_zero, 0.U, OHToUInt(imm))
-  val can_inl = (immlen <= p.pwidth.U)
+  val can_inl = (immlen <= p.prf.idxWidth.U)
   val storage = MuxCase(ImmStorageKind.NONE, Seq(
     (valid && is_zero)              -> ImmStorageKind.ZERO,
     (valid && !is_zero && can_inl)  -> ImmStorageKind.INL,
