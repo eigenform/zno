@@ -1,4 +1,4 @@
-//! Abstractions for representing clocked state in the design. 
+//! Abstractions for representing/simulating clocked state in a design. 
 //!
 //! [ClockedState] is a container used to used to synchronize updates to 
 //! simulated clocked components. All clocked components must implement
@@ -56,6 +56,7 @@ pub type StateRef<T> = Rc<RefCell<T>>;
 
 /// A container for components sharing the same clock signal. 
 pub struct ClockedState {
+    cycle: usize,
     name: String,
     /// The set of clocked components being tracked.
     components: Vec<StateRef<dyn Clocked>>,
@@ -64,6 +65,7 @@ impl ClockedState {
     /// Create a new clock domain. 
     pub fn new(name: impl ToString) -> Self { 
         Self { 
+            cycle: 0,
             name: name.to_string(),
             components: Vec::new(),
         }
@@ -71,12 +73,14 @@ impl ClockedState {
 
     /// Move an object implementing [Clocked] into the container an return 
     /// the resulting [StateRef].
-    pub fn track<T>(&mut self, obj: T) -> StateRef<T> 
+    pub fn track<T>(&mut self, obj: &StateRef<T>)
         where T: Clocked + 'static
     {
-        let rc = Rc::new(RefCell::new(obj));
-        self.components.push(rc.clone());
-        rc
+        self.components.push(obj.clone());
+    }
+
+    pub fn cycle(&self) -> usize {
+        self.cycle
     }
 }
 
@@ -86,6 +90,7 @@ impl Clocked for ClockedState {
         for entry in self.components.iter() {
             entry.borrow_mut().update()
         }
+        self.cycle += 1;
     }
 }
 
@@ -176,11 +181,37 @@ impl <T, const SIZE: usize> Clocked for RegisterFile<T, SIZE>
 mod test {
     use super::*;
 
+    pub struct MyModule {
+        state: ClockedState,
+        reg: StateRef<Register<u32>>,
+    }
+    impl MyModule {
+        pub fn new() -> Self {
+            let reg = Rc::new(RefCell::new(Register::new_init("reg", 0)));
+            let mut state = ClockedState::new("mymodule");
+            state.track(&reg);
+            let mut res = Self { 
+                state,
+                reg,
+            };
+            res
+        }
+    }
+    impl Clocked for MyModule {
+        fn name(&self) -> &str { "MyModule" }
+        fn update(&mut self) {
+            self.state.update();
+        }
+    }
+
     #[test]
     fn test() {
         let mut d = ClockedState::new("test");
-        let myreg = Register::<u32>::new_init("reg", 0);
-        let myreg = d.track(myreg);
+        let myreg = Rc::new(RefCell::new(
+            Register::<u32>::new_init("reg", 0)
+        ));
+        d.track(&myreg);
+
         for _ in 0..8 { 
             let x = myreg.borrow().output();
             println!("{}", x);
@@ -190,8 +221,4 @@ mod test {
     }
 
 }
-
-
-
-
 

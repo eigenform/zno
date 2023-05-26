@@ -1,6 +1,6 @@
 
-use crate::state::*;
-use crate::rv32i::*;
+use crate::sim::*;
+use crate::riscv::rv32i::*;
 
 #[derive(Clone, Copy, Debug)]
 pub struct FetchTarget {

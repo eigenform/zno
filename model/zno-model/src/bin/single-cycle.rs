@@ -1,10 +1,17 @@
+//! Example single-cycle RV32I model
 
+#![allow(unused_variables)]
+#![allow(unused_parens)]
+#![allow(unused_imports)]
+#![allow(unused_mut)]
+#![allow(dead_code)]
+#![allow(unreachable_patterns)]
 extern crate goblin;
 use goblin::*;
 
-use zno_model::mem::*;
-use zno_model::rv32i::*;
-use zno_model::abi::*;
+use zno_model::soc::mem::*;
+use zno_model::riscv::rv32i::*;
+use zno_model::riscv::abi::*;
 use std::ops::{BitAnd, BitOr, BitXor, Shl, Shr};
 
 fn read_prog(ram: &mut Ram, filename: &'static str) -> usize { 
@@ -284,9 +291,4 @@ fn main() {
 
     }
 }
-
-
-
-
-
 

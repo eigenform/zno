@@ -1,5 +1,5 @@
 
 # ZNO Core Reference Model
 
-ZNO core emulator, eventually for verification. 
+ZNO core emulator, eventually for simulation/verification. 
 

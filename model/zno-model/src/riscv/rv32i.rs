@@ -264,7 +264,10 @@ pub enum BranchInfo {
     CondDirect { simm: i32 },
 
     /// An unconditional indirect procedure return. 
-    Return { lr: ArchReg }
+    Return { lr: ArchReg },
+
+    /// An illegal instruction
+    Illegal(u32),
 }
 
 
@@ -602,6 +605,14 @@ impl Rv32 {
             | (((enc & Self::MASK_J_IMM1_31_31) >> 31) << 19)
         );
         Self::sext32(imm, 20) << 1
+    }
+
+    pub fn decode_arr<const sz: usize>(enc: &[u32; sz]) -> [Instr; sz] {
+        let mut res = [Instr::Illegal(0xdeadc0de); sz];
+        for idx in 0..sz {
+            res[idx] = Self::decode(enc[idx]);
+        }
+        res
     }
 
     pub fn decode(enc: u32) -> Instr {
