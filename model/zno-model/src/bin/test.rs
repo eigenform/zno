@@ -13,9 +13,11 @@ use std::rc::Rc;
 use std::cell::*;
 use std::any::*;
 
+use zno_model::sim::*;
+use zno_model::common::*;
 use zno_model::soc::mem::*;
 use zno_model::riscv::rv32i::*;
-use zno_model::sim::*;
+use zno_model::core::uarch::*;
 
 fn read_prog(ram: &mut Ram, filename: &'static str) -> usize { 
     let buffer = std::fs::read(filename).unwrap();
@@ -34,163 +36,120 @@ fn read_prog(ram: &mut Ram, filename: &'static str) -> usize {
     entry
 }
 
-/// Content-addressible memory with 1-cycle read/write
-struct SyncReadCam<K: Ord, V: Copy, const NUM_RP: usize> {
-    next: Option<(K, V)>,
-    wp_pending: Vec<(K, V)>,
-
-    rp_key: [Option<K>; NUM_RP],
-    rp_val: [Option<V>; NUM_RP],
-
-    data: BTreeMap<K, V>,
-}
-impl <K: Ord, V: Copy, const NUM_RP: usize> SyncReadCam<K, V, NUM_RP> {
-    /// Drive a new element (available on the next cycle).
-    pub fn write(&mut self, k: K, v: V) {
-        self.wp_pending.push((k, v));
-    }
-
-    pub fn drive_rp(&mut self, port: usize, k: K) {
-        self.rp_key[port] = Some(k);
-    }
-    pub fn sample_rp(&self, port: usize) -> Option<V> {
-        self.rp_val[port]
-    }
-
-    pub fn update(&mut self) {
-        for idx in 0..NUM_RP {
-            if let Some(key) = self.rp_key[idx].take() {
-                if let Some(value) = self.data.get(&key) {
-                    self.rp_val[idx] = Some(*value);
-                } else {
-                    self.rp_val[idx] = None;
-                }
-            } else {
-                self.rp_val[idx] = None;
-            }
-        }
-    }
-}
-
-struct Queue<T> {
-    next: Option<T>,
-    deq_ok: bool,
-    data: VecDeque<T>,
-}
-impl <T> Queue<T> {
-    pub fn new() -> Self {
-        Self {
-            next: None,
-            deq_ok: false,
-            data: VecDeque::new(),
-        }
-    }
-
-    /// Drive a new element onto the queue for this cycle, indicating that
-    /// the new element will be present in the queue after the next update.
-    pub fn enq(&mut self, data: T) {
-        self.next = Some(data);
-    }
-
-    /// Drive the 'deq_ok' signal for this cycle, indicating that 
-    /// the oldest entry in the queue will be removed after the next update.
-    pub fn set_deq(&mut self) {
-        self.deq_ok = true;
-    }
-
-    /// Get the oldest entry in the queue (if it exists).
-    pub fn front(&self) -> Option<&T> {
-        self.data.front()
-    }
-
-    /// Update the state of the queue. 
-    pub fn update(&mut self) {
-        // Add a new element being driven this cycle
-        if let Some(next) = self.next.take() {
-            self.data.push_back(next);
-        }
-        // Remove the oldest element if it was marked as consumed this cycle
-        if self.deq_ok {
-            self.data.pop_front();
-            self.deq_ok = false;
-        }
-    }
-}
-
-pub struct FetchBlock {
-    addr: usize,
-    data: [u8; 0x20],
-}
-impl FetchBlock {
-    pub fn as_words(&self) -> &[u32; 8] {
-        unsafe { std::mem::transmute(&self.data) }
-    }
-}
-pub struct DecodeBlock {
-    addr: usize,
-    data: [Instr; 8],
-}
-
 fn main() {
     const RAM_SIZE: usize = 0x0200_0000;
     let mut ram = Ram::new(RAM_SIZE);
     let entry = read_prog(&mut ram, "programs/test.elf");
 
-    let mut ftq: Queue<usize> = Queue::new();
-    let mut fbq: Queue<FetchBlock> = Queue::new();
-    let mut dbq: Queue<DecodeBlock> = Queue::new();
+    let mut ftq: Queue<usize>          = Queue::new();
+    let mut fbq: Queue<FetchBlock>     = Queue::new();
+    let mut dbq: Queue<DecodeBlock>    = Queue::new();
+    let mut pdq: Queue<PredecodeBlock> = Queue::new();
+
+    // Put reset vector on the FTQ
     ftq.enq(entry);
     ftq.update();
 
     for cyc in 0..8 {
-        println!("-------- cycle {} -------------", cyc);
+        println!("============== cycle {} ================", cyc);
 
+        // --------------------------------------------------------------------
+        // 0: Fetch
+        //
         // Take the pending fetch address and fetch the appropriate block.
         // Pop the fetch address and push a new fetch block.
         if let Some(fetch_addr) = ftq.front() {
             let mut fblk = FetchBlock { addr: *fetch_addr, data: [0; 0x20] };
             ram.read_bytes(*fetch_addr, &mut fblk.data);
-            println!("Fetched fblk {:08x}", fblk.addr);
+            println!("[IFU] Fetched {:08x}", fblk.addr);
             fbq.enq(fblk);
             ftq.set_deq();
         }
+        println!();
 
-        // Take the pending fetch block and predecode it. 
-        // Pop the fetch block and push a new decode block.
+        // --------------------------------------------------------------------
+        // 1: Predecode
+        //
+        // Take the pending fetch block and pre-decode it.
+        // Pop the fetch block and push a new predecoded block.
         if let Some(fblk) = fbq.front() {
-            let mut dblk = DecodeBlock {
+
+            let mut pd_info = [PredecodeInfo::default(); 8];
+            let mut pdblk = PredecodeBlock {
                 addr: fblk.addr,
-                data: Rv32::decode_arr(fblk.as_words()),
+                data: fblk.data,
+                info: pd_info
             };
-            println!("Decoded fblk {:08x}", dblk.addr);
-        }
+            let words = pdblk.as_words();
+            for idx in 0..8 {
+                let enc = words[idx];
+                let (imm_fmt, imm_data) = Rv32::decode_imm(enc);
+                // FIXME: Separate predecode logic from decode
+                let pd = Rv32::decode(enc);
+                let ill = matches!(pd, Instr::Illegal(_));
+                let brinfo = pd.branch_info();
+                pd_info[idx].illegal = ill;
+                pd_info[idx].imm_data = imm_data;
+                pd_info[idx].imm_ctl = ImmCtl {
+                    storage: ImmStorage::from_imm19(imm_data.imm19),
+                    fmt: imm_fmt,
+                };
+            }
 
-
-
-
-        // Take the pending fetch block and decode it. 
-        // Pop the fetch block and push a new decode block.
-        if let Some(fblk) = fbq.front() {
-            let mut dblk = DecodeBlock {
-                addr: fblk.addr,
-                data: Rv32::decode_arr(fblk.as_words()),
-            };
-            println!("Decoded fblk {:08x}", dblk.addr);
-            dbq.enq(dblk);
+            println!("[PDU] Predecoded {:08x}", pdblk.addr);
+            pdq.enq(pdblk);
             fbq.set_deq();
         }
+        println!();
 
+        // --------------------------------------------------------------------
+        // 2: Decode
+        //
+        // Take the pending fetch block and decode it. 
+        // Pop the fetch block and push a new decode block.
+        if let Some(pdblk) = pdq.front() {
+            let mut dblk = DecodeBlock {
+                addr: pdblk.addr,
+                data: Rv32::decode_arr(pdblk.as_words()),
+            };
+            for inst in dblk.data {
+                println!("{}", inst);
+            }
+            println!("[IDU] Decoded {:08x}", pdblk.addr);
+            dbq.enq(dblk);
+            pdq.set_deq();
+        }
+        println!();
+
+        // --------------------------------------------------------------------
+        // 3: Rename
+        if let Some(dblk) = dbq.front() {
+
+            println!("[RRN] Renamed {:08x}", dblk.addr);
+            //dbq.set_deq();
+        }
+
+
+        // --------------------------------------------------------------------
         // Put the next-sequential fetch address on the FTQ
+        // FIXME: 
         if let Some(fetch_addr) = ftq.front() {
             let next_fetch_addr = fetch_addr.wrapping_add(0x20);
             println!("Put {:08x} on FTQ", next_fetch_addr);
             ftq.enq(next_fetch_addr);
         }
 
-        // Update queues
+        // --------------------------------------------------------------------
+        // Update all of the stateful elements.
+        //
+        // Everything that occurs before this point in the loop is either
+        // (a) some representation of combinational logic, or (b) staging
+        // changes to stateful elements. 
         ftq.update();
         fbq.update();
         dbq.update();
+        pdq.update();
+
     }
 }
 

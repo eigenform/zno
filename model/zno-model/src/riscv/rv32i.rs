@@ -5,6 +5,59 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstFormat { R, I, S, B, U, J }
 
+/// RV32I immediate formats
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImmFormat { None, I, S, B, U, J }
+
+/// RV32I encoded immediate data bits.
+#[derive(Clone, Copy, Debug)]
+pub struct ImmData {
+    /// The sign bit
+    pub sign: bool,
+    /// 19-bit immediate data
+    pub imm19: u32,
+}
+impl ImmData {
+    /// Concatenate the sign bit and shift the immediate data if necessary,
+    /// forming a 32-bit value. 
+    fn gen(&self, fmt: ImmFormat) -> u32 {
+        match fmt {
+            ImmFormat::None => 0,
+            ImmFormat::I => ((self.sign as u32) << 11) | self.imm19,
+            ImmFormat::S => ((self.sign as u32) << 11) | self.imm19,
+            ImmFormat::B => (((self.sign as u32) << 11) | self.imm19) << 1,
+            ImmFormat::U => (((self.sign as u32) << 19) | self.imm19) << 12,
+            ImmFormat::J => (((self.sign as u32) << 19) | self.imm19) << 1,
+        }
+    }
+
+    /// Expand into the sign-extended 32-bit immediate
+    pub fn sext32(&self, fmt: ImmFormat) -> Option<i32> {
+        match fmt {
+            ImmFormat::I => Some(Rv32::sext32(self.gen(fmt), 12)),
+            ImmFormat::S => Some(Rv32::sext32(self.gen(fmt), 12)),
+            ImmFormat::B => Some(Rv32::sext32(self.gen(fmt), 12)),
+            ImmFormat::J => Some(Rv32::sext32(self.gen(fmt), 20)),
+            ImmFormat::U => None,
+            ImmFormat::None => None,
+        }
+    }
+
+    /// Generate the appropriate 32-bit value.
+    pub fn expand(&self, fmt: ImmFormat) -> Option<u32> {
+        match fmt {
+            ImmFormat::I => Some(self.sext32(fmt).unwrap() as u32),
+            ImmFormat::S => Some(self.sext32(fmt).unwrap() as u32),
+            ImmFormat::B => Some(self.sext32(fmt).unwrap() as u32),
+            ImmFormat::J => Some(self.sext32(fmt).unwrap() as u32),
+            ImmFormat::U => Some(self.gen(fmt)),
+            ImmFormat::None => None,
+        }
+    }
+
+}
+
+
 /// RISC-V opcodes.
 #[repr(usize)]
 #[allow(non_camel_case_types)]
@@ -524,7 +577,6 @@ impl std::fmt::Display for Instr {
 
 
 
-
 /// Wrapper type for methods implementing an RV32I instruction decoder.
 pub struct Rv32;
 impl Rv32 {
@@ -605,6 +657,52 @@ impl Rv32 {
             | (((enc & Self::MASK_J_IMM1_31_31) >> 31) << 19)
         );
         Self::sext32(imm, 20) << 1
+    }
+
+    pub fn decode_imm(enc: u32) -> (ImmFormat, ImmData) {
+        let op  = (enc & Rv32::MASK_OP_2)   >>  2;
+        let fmt = match Opcode::from(op) {
+            Opcode::OP => ImmFormat::None,
+            Opcode::SYSTEM |
+            Opcode::OP_IMM |
+            Opcode::JALR   |
+            Opcode::LOAD => ImmFormat::I,
+            Opcode::STORE => ImmFormat::S,
+            Opcode::BRANCH => ImmFormat::B,
+            Opcode::AUIPC => ImmFormat::U,
+            Opcode::LUI => ImmFormat::U,
+            Opcode::JAL => ImmFormat::J,
+            _ => unimplemented!("{:?}", op),
+        };
+        let sign_bit = (enc & 0x8000_0000) != 0;
+        let menc = enc & 0x7fff_ffff;
+        let imm = match fmt {
+            ImmFormat::None => 0,
+            ImmFormat::I => { 
+                (menc & Self::MASK_I_IMM12_20_31) >> 20
+            },
+            ImmFormat::S => {
+                   (((menc & Self::MASK_S_IMM5_07_11) >>  7) 
+                 | (((menc & Self::MASK_S_IMM7_25_31) >> 25) << 5))
+            },
+            ImmFormat::B => {
+                   (((menc & Self::MASK_B_IMM4_08_11) >>  8) 
+                 | (((menc & Self::MASK_B_IMM6_25_30) >> 25) <<  4) 
+                 | (((menc & Self::MASK_B_IMM1_07_07) >>  7) << 10) 
+                 | (((menc & Self::MASK_B_IMM1_31_31) >> 31) << 11))
+            },
+            ImmFormat::U => {
+                (menc & Self::MASK_U_IMM20_12_31) >> 12
+            },
+            ImmFormat::J => {
+                   (((menc & Self::MASK_J_IMM4_21_24) >> 21) 
+                 | (((menc & Self::MASK_J_IMM6_25_30) >> 25) << 4) 
+                 | (((menc & Self::MASK_J_IMM1_20_20) >> 20) << 10) 
+                 | (((menc & Self::MASK_J_IMM8_12_19) >> 12) << 11) 
+                 | (((menc & Self::MASK_J_IMM1_31_31) >> 31) << 19))
+            },
+        };
+        (fmt, ImmData { sign: sign_bit, imm19: imm })
     }
 
     pub fn decode_arr<const sz: usize>(enc: &[u32; sz]) -> [Instr; sz] {
@@ -691,7 +789,6 @@ impl Rv32 {
                 let simm  = Rv32::build_j_imm(enc);
                 Instr::Jal { rd, simm }
             },
-
             _ => Instr::Illegal(op),
         }
     }
