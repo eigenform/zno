@@ -5,59 +5,6 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstFormat { R, I, S, B, U, J }
 
-/// RV32I immediate formats
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ImmFormat { None, I, S, B, U, J }
-
-/// RV32I encoded immediate data bits.
-#[derive(Clone, Copy, Debug)]
-pub struct ImmData {
-    /// The sign bit
-    pub sign: bool,
-    /// 19-bit immediate data
-    pub imm19: u32,
-}
-impl ImmData {
-    /// Concatenate the sign bit and shift the immediate data if necessary,
-    /// forming a 32-bit value. 
-    fn gen(&self, fmt: ImmFormat) -> u32 {
-        match fmt {
-            ImmFormat::None => 0,
-            ImmFormat::I => ((self.sign as u32) << 11) | self.imm19,
-            ImmFormat::S => ((self.sign as u32) << 11) | self.imm19,
-            ImmFormat::B => (((self.sign as u32) << 11) | self.imm19) << 1,
-            ImmFormat::U => (((self.sign as u32) << 19) | self.imm19) << 12,
-            ImmFormat::J => (((self.sign as u32) << 19) | self.imm19) << 1,
-        }
-    }
-
-    /// Expand into the sign-extended 32-bit immediate
-    pub fn sext32(&self, fmt: ImmFormat) -> Option<i32> {
-        match fmt {
-            ImmFormat::I => Some(Rv32::sext32(self.gen(fmt), 12)),
-            ImmFormat::S => Some(Rv32::sext32(self.gen(fmt), 12)),
-            ImmFormat::B => Some(Rv32::sext32(self.gen(fmt), 12)),
-            ImmFormat::J => Some(Rv32::sext32(self.gen(fmt), 20)),
-            ImmFormat::U => None,
-            ImmFormat::None => None,
-        }
-    }
-
-    /// Generate the appropriate 32-bit value.
-    pub fn expand(&self, fmt: ImmFormat) -> Option<u32> {
-        match fmt {
-            ImmFormat::I => Some(self.sext32(fmt).unwrap() as u32),
-            ImmFormat::S => Some(self.sext32(fmt).unwrap() as u32),
-            ImmFormat::B => Some(self.sext32(fmt).unwrap() as u32),
-            ImmFormat::J => Some(self.sext32(fmt).unwrap() as u32),
-            ImmFormat::U => Some(self.gen(fmt)),
-            ImmFormat::None => None,
-        }
-    }
-
-}
-
-
 /// RISC-V opcodes.
 #[repr(usize)]
 #[allow(non_camel_case_types)]
@@ -288,41 +235,6 @@ impl std::fmt::Display for ArchReg {
     }
 }
 
-/// Branch information. 
-///
-/// For JAL:
-///     - UncondDirect when (rd == x0)
-///     - CallDirect when rd == (x1 | x5)
-///
-/// For JALR:
-///     - UncondIndirect when (rd == x0)
-///     - CallIndirect when rd == (x1 | x5)
-///     - Return when rs1 == (x1 | x5)
-///
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum BranchInfo {
-    /// An unconditional direct branch with PC-relative addressing.
-    UncondDirect { simm: i32 },
-
-    /// An unconditional direct procedure call with PC-relative addressing. 
-    CallDirect { lr: ArchReg, simm: i32 },
-
-    /// An unconditional indirect branch. 
-    UncondIndirect { base: ArchReg, simm: i32 },
-
-    /// An unconditional indirect procedure call. 
-    CallIndirect { lr: ArchReg, base: ArchReg, simm: i32 },
-
-    /// A conditional direct branch with PC-relative addressing.
-    CondDirect { simm: i32 },
-
-    /// An unconditional indirect procedure return. 
-    Return { lr: ArchReg },
-
-    /// An illegal instruction
-    Illegal(u32),
-}
-
 
 /// Representing some encoding of a RISC-V instruction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -360,8 +272,10 @@ pub enum Instr {
     /// Illegal instruction
     Illegal(u32),
 }
-
 impl Instr { 
+    /// Returns true if this is an illegal instruction.
+    pub fn is_illegal(&self) -> bool { matches!(self, Self::Illegal(_)) }
+
     /// Returns true if this instruction is a load operation.
     pub fn is_ld(&self) -> bool { matches!(self, Self::Load { .. }) }
 
@@ -372,7 +286,6 @@ impl Instr {
     pub fn is_jmp(&self) -> bool { 
         matches!(self, Self::Jal { rd: ArchReg(0), .. }) 
     }
-
 
     /// Returns true if this instruction has no effective architectural
     /// side-effects.
@@ -449,67 +362,6 @@ impl Instr {
 
     pub fn num_sch_allocs(&self) -> usize { 
         if self.is_scheduled() { 1 } else { 0 }
-    }
-
-    /// Return the branch information associated with this instruction 
-    /// (if any exists).
-    pub fn branch_info(&self) -> Option<BranchInfo> {
-        match self { 
-            Self::Jalr { rd, rs1, simm } => { 
-                match rd { 
-                    // Link register unused
-                    ArchReg(0) => {
-                        match rs1 {
-                            ArchReg(1) | ArchReg(5) => {
-                                Some(BranchInfo::Return { lr: *rs1 })
-                            },
-                            ArchReg(_) => {
-                                Some(BranchInfo::UncondIndirect { 
-                                    base: *rs1, simm: *simm 
-                                })
-                            },
-                        }
-                    },
-                    ArchReg(1) | ArchReg(5) => {
-                        match rs1 { 
-                            ArchReg(0) => {
-                                Some(BranchInfo::CallDirect { 
-                                    lr: *rd, simm: *simm 
-                                })
-                            },
-                            ArchReg(_) => {
-                                Some(BranchInfo::CallIndirect {
-                                    lr: *rd, base: *rs1, simm: *simm
-                                })
-                            },
-                        }
-                    },
-                    ArchReg(_) => {
-                        unimplemented!("{:?}", self)
-                    },
-                }
-            },
-            Self::Jal { rd, simm } => {
-                match rd {
-                    // Link register unused
-                    ArchReg(0) => Some(BranchInfo::UncondDirect { 
-                        simm: *simm 
-                    }),
-                    // Link register used w/ calling convention
-                    ArchReg(1) | ArchReg(5) => {
-                        Some(BranchInfo::CallDirect { 
-                            lr: *rd, simm: *simm 
-                        })
-                    },
-                    // TODO: How to handle other cases?
-                    ArchReg(_) => unimplemented!("{:?}", self),
-                }
-            },
-            Self::Branch { rs1, rs2, simm, brn_op } => {
-                Some(BranchInfo::CondDirect { simm: *simm })
-            },
-            _ => None
-        }
     }
 }
 
@@ -659,52 +511,7 @@ impl Rv32 {
         Self::sext32(imm, 20) << 1
     }
 
-    pub fn decode_imm(enc: u32) -> (ImmFormat, ImmData) {
-        let op  = (enc & Rv32::MASK_OP_2)   >>  2;
-        let fmt = match Opcode::from(op) {
-            Opcode::OP => ImmFormat::None,
-            Opcode::SYSTEM |
-            Opcode::OP_IMM |
-            Opcode::JALR   |
-            Opcode::LOAD => ImmFormat::I,
-            Opcode::STORE => ImmFormat::S,
-            Opcode::BRANCH => ImmFormat::B,
-            Opcode::AUIPC => ImmFormat::U,
-            Opcode::LUI => ImmFormat::U,
-            Opcode::JAL => ImmFormat::J,
-            _ => unimplemented!("{:?}", op),
-        };
-        let sign_bit = (enc & 0x8000_0000) != 0;
-        let menc = enc & 0x7fff_ffff;
-        let imm = match fmt {
-            ImmFormat::None => 0,
-            ImmFormat::I => { 
-                (menc & Self::MASK_I_IMM12_20_31) >> 20
-            },
-            ImmFormat::S => {
-                   (((menc & Self::MASK_S_IMM5_07_11) >>  7) 
-                 | (((menc & Self::MASK_S_IMM7_25_31) >> 25) << 5))
-            },
-            ImmFormat::B => {
-                   (((menc & Self::MASK_B_IMM4_08_11) >>  8) 
-                 | (((menc & Self::MASK_B_IMM6_25_30) >> 25) <<  4) 
-                 | (((menc & Self::MASK_B_IMM1_07_07) >>  7) << 10) 
-                 | (((menc & Self::MASK_B_IMM1_31_31) >> 31) << 11))
-            },
-            ImmFormat::U => {
-                (menc & Self::MASK_U_IMM20_12_31) >> 12
-            },
-            ImmFormat::J => {
-                   (((menc & Self::MASK_J_IMM4_21_24) >> 21) 
-                 | (((menc & Self::MASK_J_IMM6_25_30) >> 25) << 4) 
-                 | (((menc & Self::MASK_J_IMM1_20_20) >> 20) << 10) 
-                 | (((menc & Self::MASK_J_IMM8_12_19) >> 12) << 11) 
-                 | (((menc & Self::MASK_J_IMM1_31_31) >> 31) << 19))
-            },
-        };
-        (fmt, ImmData { sign: sign_bit, imm19: imm })
-    }
-
+    /// Decode an array of instructions.
     pub fn decode_arr<const sz: usize>(enc: &[u32; sz]) -> [Instr; sz] {
         let mut res = [Instr::Illegal(0xdeadc0de); sz];
         for idx in 0..sz {
@@ -713,6 +520,12 @@ impl Rv32 {
         res
     }
 
+    /// Decode an RV32I instruction. 
+    /// 
+    /// NOTE: This is suitable for implementing a simple disassembler, but
+    /// it doesn't necessarily reflect anything useful about a simulated 
+    /// implementation of a decoder in hardware. 
+    ///
     pub fn decode(enc: u32) -> Instr {
         // The positions of these fields are always fixed.
         let op  = (enc & Rv32::MASK_OP_2)   >>  2;
@@ -792,7 +605,188 @@ impl Rv32 {
             _ => Instr::Illegal(op),
         }
     }
+}
 
+/// RV32I immediate formats
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImmFormat { None, I, S, B, U, J }
+
+/// RV32I encoded immediate data bits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImmData {
+    /// The sign bit
+    pub sign: bool,
+    /// 19-bit immediate data
+    pub imm19: u32,
+}
+impl ImmData {
+    /// Concatenate the sign bit and shift the immediate data if necessary,
+    /// forming a 32-bit value. 
+    fn gen(&self, fmt: ImmFormat) -> u32 {
+        match fmt {
+            ImmFormat::None => 0,
+            ImmFormat::I => ((self.sign as u32) << 11) | self.imm19,
+            ImmFormat::S => ((self.sign as u32) << 11) | self.imm19,
+            ImmFormat::B => (((self.sign as u32) << 11) | self.imm19) << 1,
+            ImmFormat::U => (((self.sign as u32) << 19) | self.imm19) << 12,
+            ImmFormat::J => (((self.sign as u32) << 19) | self.imm19) << 1,
+        }
+    }
+
+    /// Expand into the sign-extended 32-bit immediate
+    pub fn sext32(&self, fmt: ImmFormat) -> Option<i32> {
+        match fmt {
+            ImmFormat::I => Some(Rv32::sext32(self.gen(fmt), 12)),
+            ImmFormat::S => Some(Rv32::sext32(self.gen(fmt), 12)),
+            ImmFormat::B => Some(Rv32::sext32(self.gen(fmt), 12)),
+            ImmFormat::J => Some(Rv32::sext32(self.gen(fmt), 20)),
+            ImmFormat::U => None,
+            ImmFormat::None => None,
+        }
+    }
+
+    /// Generate the appropriate 32-bit value.
+    pub fn expand(&self, fmt: ImmFormat) -> Option<u32> {
+        match fmt {
+            ImmFormat::I => Some(self.sext32(fmt).unwrap() as u32),
+            ImmFormat::S => Some(self.sext32(fmt).unwrap() as u32),
+            ImmFormat::B => Some(self.sext32(fmt).unwrap() as u32),
+            ImmFormat::J => Some(self.sext32(fmt).unwrap() as u32),
+            ImmFormat::U => Some(self.gen(fmt)),
+            ImmFormat::None => None,
+        }
+    }
+}
+
+impl Rv32 {
+    pub fn decode_imm(enc: u32) -> (ImmFormat, ImmData) {
+        let op  = (enc & Rv32::MASK_OP_2)   >>  2;
+        let fmt = match Opcode::from(op) {
+            Opcode::OP => ImmFormat::None,
+            Opcode::SYSTEM |
+            Opcode::OP_IMM |
+            Opcode::JALR   |
+            Opcode::LOAD => ImmFormat::I,
+            Opcode::STORE => ImmFormat::S,
+            Opcode::BRANCH => ImmFormat::B,
+            Opcode::AUIPC => ImmFormat::U,
+            Opcode::LUI => ImmFormat::U,
+            Opcode::JAL => ImmFormat::J,
+            _ => unimplemented!("{:?}", op),
+        };
+        let sign_bit = (enc & 0x8000_0000) != 0;
+        let menc = enc & 0x7fff_ffff;
+        let imm = match fmt {
+            ImmFormat::None => 0,
+            ImmFormat::I => { 
+                (menc & Self::MASK_I_IMM12_20_31) >> 20
+            },
+            ImmFormat::S => {
+                   (((menc & Self::MASK_S_IMM5_07_11) >>  7) 
+                 | (((menc & Self::MASK_S_IMM7_25_31) >> 25) << 5))
+            },
+            ImmFormat::B => {
+                   (((menc & Self::MASK_B_IMM4_08_11) >>  8) 
+                 | (((menc & Self::MASK_B_IMM6_25_30) >> 25) <<  4) 
+                 | (((menc & Self::MASK_B_IMM1_07_07) >>  7) << 10) 
+                 | (((menc & Self::MASK_B_IMM1_31_31) >> 31) << 11))
+            },
+            ImmFormat::U => {
+                (menc & Self::MASK_U_IMM20_12_31) >> 12
+            },
+            ImmFormat::J => {
+                   (((menc & Self::MASK_J_IMM4_21_24) >> 21) 
+                 | (((menc & Self::MASK_J_IMM6_25_30) >> 25) << 4) 
+                 | (((menc & Self::MASK_J_IMM1_20_20) >> 20) << 10) 
+                 | (((menc & Self::MASK_J_IMM8_12_19) >> 12) << 11) 
+                 | (((menc & Self::MASK_J_IMM1_31_31) >> 31) << 19))
+            },
+        };
+        (fmt, ImmData { sign: sign_bit, imm19: imm })
+    }
+}
+
+/// Branch information. 
+///
+/// For JAL:
+///     - UncondDirect when (rd == x0)
+///     - CallDirect when rd == (x1 | x5)
+///
+/// For JALR:
+///     - UncondIndirect when (rd == x0)
+///     - CallIndirect when rd == (x1 | x5)
+///     - Return when rs1 == (x1 | x5)
+///
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BranchInfo {
+    /// An unconditional direct branch with PC-relative addressing.
+    UncondDirect { simm: i32 },
+
+    /// An unconditional direct procedure call with PC-relative addressing. 
+    CallDirect { lr: ArchReg, simm: i32 },
+
+    /// An unconditional indirect branch. 
+    UncondIndirect { base: ArchReg, simm: i32 },
+
+    /// An unconditional indirect procedure call. 
+    CallIndirect { lr: ArchReg, base: ArchReg, simm: i32 },
+
+    /// A conditional direct branch with PC-relative addressing.
+    CondDirect { simm: i32 },
+
+    /// An unconditional indirect procedure return. 
+    Return { lr: ArchReg },
+
+    /// An illegal instruction
+    Illegal(u32),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum BranchKind {
+    Return,
+    CallAbsolute,
+    CallIndirect,
+    CallRelative,
+    JmpRelative,
+    JmpIndirect,
+    JmpDirect,
+    BrnRelative,
+}
+
+impl Instr {
+    pub fn branch_kind(&self) -> Option<BranchKind> {
+        match self {
+            Self::Jalr { rd, rs1, simm } => {
+                match rd {
+                    ArchReg(0) => {
+                        match rs1 {
+                            ArchReg(1) | ArchReg(5) => Some(BranchKind::Return),
+                            _ => Some(BranchKind::JmpIndirect),
+                        }
+                    },
+                    ArchReg(1) | ArchReg(5) => {
+                        match rs1 {
+                            ArchReg(0) => Some(BranchKind::CallAbsolute),
+                            _ => Some(BranchKind::CallIndirect),
+                        }
+                    },
+                    _ => Some(BranchKind::JmpIndirect),
+                }
+            },
+            Self::Jal { rd, .. } => {
+                match rd {
+                    ArchReg(1) | ArchReg(5) => {
+                        Some(BranchKind::CallRelative)
+                    }
+                    _ => Some(BranchKind::JmpRelative),
+                }
+            },
+            Self::Branch { .. } => {
+                Some(BranchKind::BrnRelative)
+            },
+            _ => None,
+        }
+    }
 }
 
 
