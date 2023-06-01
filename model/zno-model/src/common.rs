@@ -4,22 +4,43 @@ pub mod queue;
 
 use std::collections::*;
 
-pub struct Reg<T: Copy> {
+#[derive(Clone, Copy)]
+pub struct Reg<T: Copy + Default> {
     next: Option<T>,
     data: T,
 }
-impl <T: Copy> Reg<T> {
+impl <T: Copy + Default> Reg<T> {
     pub fn new(init: T) -> Self { 
         Self { next: None, data: init }
     }
+    pub fn next_as_mut(&mut self) -> &mut T {
+        self.next.get_or_insert(T::default())
+    }
     pub fn drive(&mut self, val: T) { self.next = Some(val) }
     pub fn sample(&self) -> T { self.data }
+    pub fn sample_ref(&self) -> &T { &self.data }
     pub fn update(&mut self) {
         if let Some(next) = self.next.take() {
             self.data = next;
         }
     }
 }
+
+pub struct ValidReg<T> {
+    data: Option<T>,
+}
+impl <T> ValidReg<T> {
+    pub fn new_valid(init: T) -> Self { 
+        Self { data: Some(init) }
+    }
+    pub fn new_invalid() -> Self { 
+        Self { data: None }
+    }
+    pub fn sample(&self) -> &Option<T> { &self.data }
+    pub fn drive_valid(&mut self, val: T) { self.data = Some(val) }
+    pub fn invalidate(&mut self) { self.data = None }
+}
+
 
 
 // FIXME: Should "sampling" also mean sampling the index?
@@ -46,6 +67,40 @@ impl <I, D> SyncWritePort<I, D> {
         self.state = Some((idx, data)); 
     }
 }
+
+pub struct Mem<D: Copy + Default, const SZ: usize> {
+    data: [ Reg<D>; SZ ],
+}
+impl <D: Copy + Default, const SZ: usize> Mem<D, SZ> {
+    pub fn new(init: D) -> Self { 
+        Self { data: [ Reg::new(init); SZ ] }
+    }
+    pub fn drive(&mut self, idx: usize, val: D) { 
+        self.data[idx].drive(val);
+    }
+    pub fn update(&mut self) {
+        for r in self.data.iter_mut() {
+            r.update();
+        }
+    }
+}
+impl <D: Copy + Default, const SZ: usize> 
+std::ops::Index<usize> for Mem<D, SZ> 
+{
+    type Output = D;
+    fn index(&self, idx: usize) -> &Self::Output {
+        self.data[idx].sample_ref()
+    }
+}
+impl <D: Copy + Default, const SZ: usize> 
+std::ops::IndexMut<usize> for Mem<D, SZ> 
+{
+    fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
+        self.data[idx].next_as_mut()
+    }
+}
+
+
 
 /// Register file with synchronous read, statically-provisioned ports, and
 /// no write-to-read forwarding.

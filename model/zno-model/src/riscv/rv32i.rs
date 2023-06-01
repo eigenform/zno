@@ -744,13 +744,36 @@ pub enum BranchInfo {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BranchKind {
     Return,
-    CallAbsolute,
     CallIndirect,
+    JmpIndirect,
     CallRelative,
     JmpRelative,
-    JmpIndirect,
-    JmpDirect,
     BrnRelative,
+}
+impl BranchKind {
+    pub fn is_conditional(&self) -> bool {
+        matches!(self, Self::BrnRelative)
+    }
+    pub fn is_unconditional(&self) -> bool {
+        !self.is_conditional()
+    }
+    pub fn is_indirect(&self) -> bool {
+        match self {
+            Self::Return | 
+            Self::CallIndirect | 
+            Self::JmpRelative => true,
+            _ => false,
+        }
+    }
+    pub fn is_relative(&self) -> bool {
+        match self {
+            Self::CallRelative | 
+            Self::JmpRelative | 
+            Self::BrnRelative => true,
+            _ => false,
+        }
+    }
+
 }
 
 impl Instr {
@@ -766,7 +789,6 @@ impl Instr {
                     },
                     ArchReg(1) | ArchReg(5) => {
                         match rs1 {
-                            ArchReg(0) => Some(BranchKind::CallAbsolute),
                             _ => Some(BranchKind::CallIndirect),
                         }
                     },

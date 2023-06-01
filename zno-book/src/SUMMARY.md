@@ -6,6 +6,7 @@
 
 - [ZNO Frontend](./front/frontend.md)
     - [Branch Prediction](./front/bpred.md)
+    - [Next-Fetch Prediction](./front/nfpred.md)
     - [Instruction Fetch](./front/fetch.md)
     - [Instruction Predecode](./front/predecode.md)
     - [Instruction Decode](./front/decode.md)
