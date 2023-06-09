@@ -34,16 +34,16 @@ fn read_prog(ram: &mut Ram, filename: &'static str) -> usize {
     entry
 }
 
+#[derive(Clone, Copy)]
 pub enum ExitKind {
     None,
     Static(usize),
-
 }
 
+#[derive(Clone, Copy)]
 pub struct Block {
-    start: usize,
-    exit: Option<usize>,
-    exitkind: ExitKind,
+    cfe: ControlFlowEvent,
+    exit: ExitKind,
 }
 
 fn main() {
@@ -64,32 +64,46 @@ fn main() {
     // Decode block queue
     let mut dbq: Queue<DecodeBlock>    = Queue::new();
 
+    /// Renamed block queue
+    let mut rbq: Queue<DecodeBlock>    = Queue::new();
+
+    let mut frl: Freelist<256> = Freelist::new();
+    let mut map = RegisterMap::new();
+
     // Control-flow map
-    let mut cfm: SyncReadCam<usize, CfmEntry, 1, 1> = SyncReadCam::new();
+    let mut cfm: AsyncReadCam<usize, CfmEntry> = AsyncReadCam::new();
 
     // Control-flow map stage registers
     let mut cfm_pdblk_s1 = Reg::<Option<PredecodeBlock>>::new(None);
     let mut cfm_rp0_s1   = Reg::<Option<(usize, Option<CfmEntry>)>>::new(None);
 
-    let mut blk = Block {
-        start: entry,
-        exit: None,
-        exitkind: ExitKind::None,
-    };
+
+    let mut cfeq = CircularQueue::<Block, 8>::new();
 
     for cyc in 0..8 {
         println!("============== cycle {} ================", cyc);
 
+        // ====================================================================
+        // Control-flow events
+
         cfe_s0.drive(None);
 
-        // Send the next program counter to the FTQ.
+        // Handle a control-flow event.
         if let Some(cfe) = cfe_s0.sample() {
+
+            // Queue up this address for fetch
             println!("[CFE] Sending pc={:08x} to FTQ", cfe.npc);
             ftq.enq(cfe.npc);
-        } 
 
-        if let Some(cfe) = cfe_s0.sample() {
-        }
+
+            if let Some(cfm_entry) = cfm.sample_rp(cfe.npc) {
+                println!("[CFM] CFM hit unimplemented");
+            } 
+            else {
+                println!("[CFM] CFM miss unimplemented");
+            }
+
+        } 
 
 
         // ====================================================================
@@ -121,10 +135,7 @@ fn main() {
         // Pop the fetch block and push a new predecoded block.
         if let Some(fblk) = fbq.front() {
             let words = fblk.as_words();
-            let mut pd_info = [PredecodeInfo::default(); 8];
-
             let mut pdblk = fblk.predecode();
-
             println!("[PDU] Predecoded {:08x}", pdblk.addr);
             pdq.enq(pdblk);
             fbq.set_deq();
@@ -136,117 +147,162 @@ fn main() {
 
         // ====================================================================
         // Stage 2
-        //
-        // 1. Instruction decode
-        // 2. CFM validate
 
-
-        // Take the pending fetch block and decode it. 
-        // Pop the fetch block and push a new decode block.
+        // Take the pending pre-decoded block and decode it. 
+        // Pop the pre-decoded block and push a new decode block.
         if let Some(pdblk) = pdq.front() {
+
+            let enc_arr = pdblk.as_words();
+            let info_arr = pdblk.get_imm_info();
+
             println!("[IDU] Decoding {:08x}", pdblk.addr);
             let mut dblk = DecodeBlock {
                 start: pdblk.start,
                 addr: pdblk.addr,
-                data: Rv32::decode_arr(pdblk.as_words()),
+                exit: pdblk.get_exit(),
+                data: MacroOp::decode_arr(&enc_arr, &info_arr),
             };
-            for inst in dblk.data {
-                println!("{}", inst);
-            }
+
+            dblk.print();
+            //for inst in dblk.data {
+            //    println!("{}", inst);
+            //}
             dbq.enq(dblk);
             pdq.set_deq();
         }
-
-        if let Some(pdblk) = pdq.front() {
-            // If no branch exists, this must result in a next-sequential
-            // control-flow event. 
-            if pdblk.is_sequential() {
-                println!("[PDU] Block {:08x} is sequential", pdblk.addr);
-                cfe_s0.drive(Some(ControlFlowEvent {
-                    spec: true,
-                    npc: pdblk.addr.wrapping_add(0x20),
-                    redirect: false,
-                }));
-            } 
-            else { 
-                // Easy case where a single unconditional relative jump 
-                // exists within this block. 
-                if let Some((idx, npc)) = pdblk.get_single_static_exit() {
-                    println!("[CFM] Discovered always-taken jmp at {:08x}",
-                             pdblk.addr.wrapping_add(idx << 2));
-                    cfe_s0.drive(Some(ControlFlowEvent {
-                        spec: true,
-                        npc: npc,
-                        redirect: false,
-                    }));
-                } 
-                else {
-                    let branches = pdblk.get_branches();
-                    let next_brn = branches.first().unwrap();
-                    let brn_pc = pdblk.addr.wrapping_add(next_brn.0 << 2);
-                    let current_pc = pdblk.addr.wrapping_add(pdblk.start << 2);
-                    println!("pc={:08x} brn_addr={:08x}", current_pc, brn_pc);
-                    println!("{:?}", next_brn);
-                }
-
-            }
-        }
-
-
-        //// Compare the CFM access with the corresponding predecode output
-        //{
-        //    let new_pdblk = cfm_pdblk_s1.sample();
-        //    let rp0_res   = cfm_rp0_s1.sample();
-        //    if new_pdblk.is_some() && rp0_res.is_some() {
-        //        let pdblk = new_pdblk.unwrap();
-        //        let (rp0_addr, rp0_entry) = rp0_res.unwrap();
-        //        assert!(pdblk.addr == rp0_addr);
-        //        // This was a CFM hit
-        //        if let Some(entry) = rp0_entry {
-        //            println!("[CFM] Verifying CFM hit {:08x}", pdblk.addr);
-        //        } 
-        //        // If this was a CFM miss, we need to determine *why* and take
-        //        // some kind of corrective action
-        //        else {
-
-        //            // For blocks with no control-flow instructions, all we 
-        //            // can do is continue fetching sequentially. 
-        //            if pdblk.is_sequential() {
-        //                println!("[CFM] Sequential block miss {:08x}", 
-        //                         pdblk.addr);
-        //                cfe_s0.drive_valid(
-        //                    ControlFlowEvent {
-        //                        spec: true,
-        //                        npc: pdblk.addr.wrapping_add(0x20),
-        //                    }
-        //                );
-        //            }
-        //            // Otherwise, we need to build a new CFM entry 
-        //            else {
-        //                println!("[CFM] New CFM entry for miss {:08x}", 
-        //                         pdblk.addr);
-        //                let new_entry = pdblk.to_cfm_entry();
-        //            }
-
-        //        }
-        //    } 
-        //    else {
-        //    }
-        //}
 
         // ====================================================================
         // Stage 3
         //
         // 1. Register Rename
 
+        map.print();
+
         // Take the pending decode block and rename it. 
         if let Some(dblk) = dbq.front() {
             println!("[RRN] Renamed {:08x}", dblk.addr);
+
+            let mut blk = dblk.clone();
+            blk.rewrite_static_zero_operands();
+
+            // Resolve dynamic zeroes and mov operations, propagating the 
+            // results until the output has settled. 
+            //
+            // NOTE: It's not actually clear whether or not this is something 
+            // you can do in hardware? This is like waiting for a comb loop
+            // to become stable? Otherwise, we need a hard limit on the 
+            // number of times this logic is allowed to repeat. 
+            //
+            // NOTE: Another question is whether or not you *want* to do 
+            // this: do zeroes occur often enough that it's worth the cost?
+            //
+            let mut rewrite_done = false;
+            let mut rewrite_pass = 0;
+            while !rewrite_done {
+                assert!(rewrite_pass < 16);
+                let num_zeroes = blk.rewrite_dyn_zero_operands(map.sample_zeroes());
+                let num_movs = blk.rewrite_mov_ops();
+                rewrite_pass += 1;
+                rewrite_done = (num_zeroes == 0 && num_movs == 0);
+                if !rewrite_done {
+                    println!("[RRN] Pass {}: rewrote {} dynamic zeroes", 
+                             rewrite_pass, num_zeroes);
+                    println!("[RRN] Pass {}: rewrote {} mov ops", 
+                             rewrite_pass, num_movs);
+                }
+            }
+
+            // Rewrite physical destinations with allocations.
+            // Bind destination register to allocation by driving map write ports.
+            let num_alcs = blk.num_preg_allocs();
+            println!("[RRN] FRL has {} free entries, need {}", 
+                     frl.num_free(), num_alcs);
+            let mut alcs = frl.sample_alcs(num_alcs).unwrap();
+            alcs.reverse();
+            for (idx, mut mop) in blk.iter_seq_mut() {
+                if mop.has_rr_alc() {
+                    let prn = alcs.pop().unwrap();
+                    mop.pd = PhysRegDst::Allocated(prn);
+                    map.drive_wp(mop.rd, prn);
+                }
+                //println!("  {} {}", idx, mop);
+            }
+            assert!(alcs.is_empty());
+
+            // Rename with local dependences
+            let ldeps = blk.calc_local_deps();
+            for (sidx, rs1_pidx, rs2_pidx) in ldeps {
+                if let Some(pidx) = rs1_pidx {
+                    let byp_pd = blk.data[pidx].get_pd().unwrap();
+                    blk.data[sidx].ps1 = PhysRegSrc::Local(byp_pd);
+                }
+                if let Some(pidx) = rs2_pidx {
+                    let byp_pd = blk.data[pidx].get_pd().unwrap();
+                    blk.data[sidx].ps2 = PhysRegSrc::Local(byp_pd);
+                }
+            }
+
+            // Rename with global dependences
+            for (idx, mut mop) in blk.iter_seq_mut() {
+                if mop.op1 == Operand::Reg && mop.ps1 == PhysRegSrc::None {
+                    let (prn, zero) = map.sample_rp(mop.rs1);
+                    assert!(!zero);
+                    mop.ps1 = PhysRegSrc::Global(prn);
+                }
+                if mop.op2 == Operand::Reg && mop.ps2 == PhysRegSrc::None {
+                    let (prn, zero) = map.sample_rp(mop.rs2);
+                    assert!(!zero);
+                    mop.ps2 = PhysRegSrc::Global(prn);
+                }
+            }
+
+            // Complete move operations by driving map write ports
+            for (idx, mop) in blk.iter_seq() {
+                match mop.mov {
+                    MovCtl::None => {},
+                    MovCtl::Zero => {
+                        map.drive_wp(mop.rd, 0);
+                    },
+                    MovCtl::Op1 => {
+                        match mop.op1 {
+                            Operand::None => unreachable!(),
+                            Operand::Zero => unreachable!(),
+                            Operand::Pc => unimplemented!(),
+                            Operand::Imm => unimplemented!(),
+                            Operand::Reg => {
+                                map.drive_wp(mop.rd, mop.get_ps1().unwrap());
+                            },
+                        }
+                    },
+                    MovCtl::Op2 => {
+                        match mop.op2 {
+                            Operand::None => unreachable!(),
+                            Operand::Zero => unreachable!(),
+                            Operand::Pc => unimplemented!(),
+                            Operand::Imm => unimplemented!(),
+                            Operand::Reg => {
+                                map.drive_wp(mop.rd, mop.get_ps2().unwrap());
+                            },
+                        }
+                    },
+                }
+
+                println!("  {} {}", idx, mop);
+            }
+
+            rbq.enq(blk);
             dbq.set_deq();
         } else {
             println!("[RRN] DBQ is empty");
 
         }
+
+        if let Some(rblk) = rbq.front() {
+            println!("[DIS] Dispatching {:08x}", rblk.addr);
+        } else {
+            println!("[DIS] RBQ is empty");
+        }
+
 
 
         // ====================================================================
@@ -262,11 +318,16 @@ fn main() {
         ftq.update();
         fbq.update();
         dbq.update();
+        rbq.update();
         pdq.update();
         cfm.update();
         cfm_rp0_s1.update();
         cfm_pdblk_s1.update();
         cfe_s0.update();
+        cfeq.update();
+
+        frl.update();
+        map.update();
 
     }
 }

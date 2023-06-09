@@ -10,12 +10,12 @@
 //!
 //! The idea is to *approximate* the semantics of a behavioral RTL so that 
 //! it's a little bit easier to write Rust programs that *look* a something 
-//! like a hardware model.
+//! like a hardware model and behave like simulated RTL. 
 //!
 //! Examples
 //! ========
 //!
-//! In general, usage will probably look like this:
+//! Usage will probably look like this:
 //!
 //! //```
 //! //let mut d = ClockedState::new();
@@ -45,8 +45,6 @@ use std::rc::*;
 
 /// Interface to clocked components. 
 pub trait Clocked { 
-    /// Returns the unique name of this component. 
-    fn name(&self) -> &str;
     /// Simulate a clock edge, mutating some internal state. 
     fn update(&mut self);
 }
@@ -57,16 +55,14 @@ pub type StateRef<T> = Rc<RefCell<T>>;
 /// A container for components sharing the same clock signal. 
 pub struct ClockedState {
     cycle: usize,
-    name: String,
     /// The set of clocked components being tracked.
     components: Vec<StateRef<dyn Clocked>>,
 }
 impl ClockedState { 
     /// Create a new clock domain. 
-    pub fn new(name: impl ToString) -> Self { 
+    pub fn new() -> Self { 
         Self { 
             cycle: 0,
-            name: name.to_string(),
             components: Vec::new(),
         }
     }
@@ -85,7 +81,6 @@ impl ClockedState {
 }
 
 impl Clocked for ClockedState {
-    fn name(&self) -> &str { &self.name }
     fn update(&mut self) {
         for entry in self.components.iter() {
             entry.borrow_mut().update()
@@ -97,16 +92,15 @@ impl Clocked for ClockedState {
 /// Stateful element with emulated sequential logic semantics.
 pub struct Register<T> where T: Copy + Default + Debug
 {
-    name: String,
     data: T,
     input: Option<T>,
 }
 impl <T: Copy + Default + Debug> Register<T> 
     where T: Copy + Default + Debug
 {
-    pub fn new_init(name: &'static str, init: T) -> Self
+    pub fn new_init(init: T) -> Self
     {
-        Self { name: name.to_string(), data: init, input: None }
+        Self { data: init, input: None }
     }
 
     /// Returns the current output from this register.
@@ -121,7 +115,7 @@ impl <T: Copy + Default + Debug> Register<T>
 }
 impl <T> Default for Register<T> where T: Copy + Default + Debug {
     fn default() -> Self {
-        Self { name: "unk".to_string(), data: T::default(), input: None, }
+        Self { data: T::default(), input: None, }
     }
 }
 impl <T> Clocked for Register<T> where T: Copy + Default + Debug {
@@ -131,24 +125,19 @@ impl <T> Clocked for Register<T> where T: Copy + Default + Debug {
             self.input = None;
         }
     }
-    fn name(&self) -> &str { 
-        &self.name
-    }
 }
 
 pub struct RegisterFile<T: Copy + Default + Debug, const SIZE: usize> 
     where T: Copy + Default + Debug
 {
-    name:  String,
     data:  [T; SIZE],
     input: [Option<T>; SIZE],
 }
 impl <T, const SIZE: usize> RegisterFile<T, SIZE>
     where T: Copy + Default + Debug
 {
-    pub fn new_init(name: impl ToString, init: T) -> Self { 
+    pub fn new_init(init: T) -> Self { 
         Self { 
-            name: name.to_string(),
             data:  [init; SIZE],
             input: [None; SIZE],
         }
@@ -164,9 +153,6 @@ impl <T, const SIZE: usize> RegisterFile<T, SIZE>
 impl <T, const SIZE: usize> Clocked for RegisterFile<T, SIZE> 
     where T: Copy + Default + Debug
 {
-    fn name(&self) -> &str { 
-        &self.name 
-    }
     fn update(&mut self) {
         for idx in 0..SIZE { 
             if let Some(val) = self.input[idx].take() {
@@ -187,8 +173,8 @@ mod test {
     }
     impl MyModule {
         pub fn new() -> Self {
-            let reg = Rc::new(RefCell::new(Register::new_init("reg", 0)));
-            let mut state = ClockedState::new("mymodule");
+            let reg = Rc::new(RefCell::new(Register::new_init(0)));
+            let mut state = ClockedState::new();
             state.track(&reg);
             let mut res = Self { 
                 state,
@@ -198,7 +184,6 @@ mod test {
         }
     }
     impl Clocked for MyModule {
-        fn name(&self) -> &str { "MyModule" }
         fn update(&mut self) {
             self.state.update();
         }
@@ -206,9 +191,9 @@ mod test {
 
     #[test]
     fn test() {
-        let mut d = ClockedState::new("test");
+        let mut d = ClockedState::new();
         let myreg = Rc::new(RefCell::new(
-            Register::<u32>::new_init("reg", 0)
+            Register::<u32>::new_init(0)
         ));
         d.track(&myreg);
 

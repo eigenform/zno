@@ -82,15 +82,14 @@ impl From<(u32, u32)> for RvALUOpImm {
     fn from(x: (u32, u32)) -> Self {
         match x {
             (0b000, _) => Self::Addi,
+            (0b001, 0b0000000) => Self::Slli,
             (0b010, _) => Self::Slti,
             (0b011, _) => Self::Sltiu,
             (0b100, _) => Self::Xori,
-            (0b110, _) => Self::Ori,
-            (0b111, _) => Self::Andi,
-
-            (0b001, 0b0000000) => Self::Slli,
             (0b101, 0b0000000) => Self::Srli,
             (0b101, 0b0100000) => Self::Srai,
+            (0b110, _) => Self::Ori,
+            (0b111, _) => Self::Andi,
             _ => unimplemented!("ALU op f3={:03b} f7={:07b}", x.0, x.1),
         }
     }
@@ -122,15 +121,12 @@ impl From<(u32, u32)> for RvALUOp {
         match x {
             (0b000, 0b0000000) => Self::Add,
             (0b000, 0b0100000) => Self::Sub,
-
             (0b001, 0b0000000) => Self::Sll,
             (0b010, 0b0000000) => Self::Slt,
             (0b011, 0b0000000) => Self::Sltu,
             (0b100, 0b0000000) => Self::Xor,
-
             (0b101, 0b0000000) => Self::Srl,
             (0b101, 0b0100000) => Self::Sra,
-
             (0b110, 0b0000000) => Self::Or,
             (0b111, 0b0000000) => Self::And,
             _ => unimplemented!("ALU op f3={:03b} f7[1]={}", x.0, x.1),
@@ -228,6 +224,10 @@ impl ArchReg {
         assert!(idx < 32);
         Self(idx)
     }
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+    pub fn as_usize(&self) -> usize { self.0 as usize }
 }
 impl std::fmt::Display for ArchReg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -272,55 +272,25 @@ pub enum Instr {
     /// Illegal instruction
     Illegal(u32),
 }
+
 impl Instr { 
     /// Returns true if this is an illegal instruction.
     pub fn is_illegal(&self) -> bool { matches!(self, Self::Illegal(_)) }
-
-    /// Returns true if this instruction is a load operation.
-    pub fn is_ld(&self) -> bool { matches!(self, Self::Load { .. }) }
-
-    /// Returns true if this instruction is a store operation.
-    pub fn is_st(&self) -> bool { matches!(self, Self::Store { .. }) }
-
-    /// Returns true if this instruction is a direct unconditional jump
-    pub fn is_jmp(&self) -> bool { 
-        matches!(self, Self::Jal { rd: ArchReg(0), .. }) 
-    }
 
     /// Returns true if this instruction has no effective architectural
     /// side-effects.
     ///
     /// The RISC-V ISA defines an explicit NOP encoding (`addi x0, x0, 0`).
-    /// However, all other integer operations with `rd == x0` should also
-    /// be treated as no-ops. 
-    ///
     pub fn is_nop(&self) -> bool {
         match self { 
-            Self::Op    { rd, .. } |
-            Self::OpImm { rd, .. } |
-            Self::Lui   { rd, .. } |
-            Self::AuiPc { rd, .. } |
-            Self::Load  { rd, .. } if *rd == ArchReg(0) => true,
+            Self::Op { rd, rs1, rs2, alu_op } => {
+                *rd == ArchReg(0) && 
+                *rs1 == ArchReg(0) && 
+                *rs2 == ArchReg(0) && 
+                *alu_op == RvALUOp::Add
+            },
             _ => false,
         }
-    }
-
-    /// Returns true if this instruction will be scheduled.
-    ///
-    /// Some instructions do not need to be sent to execution units in the
-    /// integer pipeline, for instance:
-    ///
-    /// - No-ops do not need to be executed
-    /// - Illegal instructions do not need to be executed
-    ///
-    pub fn is_scheduled(&self) -> bool {
-        if self.is_nop() { 
-            return false;
-        }
-        if matches!(self, Self::Illegal(_)) {
-            return false;
-        }
-        true
     }
 
     /// Returns the architectural destination register specified by this
@@ -338,31 +308,28 @@ impl Instr {
         }
     }
 
-    /// Returns the number of physical register allocations required to
-    /// execute this instruction. 
-    pub fn num_preg_allocs(&self) -> usize {
-        if self.is_nop() { 
-            return 0; 
-        }
+    pub fn rs1(&self) -> Option<ArchReg> {
         match self {
-            // Integer operations allocate for 'rd'
-            Self::Op { .. }
-            | Self::OpImm { .. }
-            | Self::Jalr { .. }
-            | Self::AuiPc { .. }
-            | Self::Lui { .. }
-            | Self::Jal { .. } => 1,
-            // Load operations allocate for 'rd' and address generation
-            Self::Load { .. } => 2,
-            // Store operations allocate for address generation
-            Self::Store { .. } => 1,
-            _ => 0,
+            Self::Op { rs1, .. } 
+            | Self::OpImm { rs1, .. }
+            | Self::Load { rs1, .. }
+            | Self::Jalr { rs1, .. }
+            | Self::Store { rs1, .. }
+            | Self::Branch { rs1, .. } => Some(*rs1),
+            _ => None,
         }
     }
 
-    pub fn num_sch_allocs(&self) -> usize { 
-        if self.is_scheduled() { 1 } else { 0 }
+    pub fn rs2(&self) -> Option<ArchReg> {
+        match self {
+            Self::Op { rs2, .. } 
+            | Self::Store { rs2, .. }
+            | Self::Branch { rs2, .. } => Some(*rs2),
+            _ => None,
+        }
     }
+
+
 }
 
 impl Default for Instr { 
@@ -376,7 +343,6 @@ impl Default for Instr {
 //        write!(f, "{}", self)
 //    }
 //}
-
 impl std::fmt::Display for Instr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -433,35 +399,35 @@ impl std::fmt::Display for Instr {
 pub struct Rv32;
 impl Rv32 {
     // Bitmasks for fixed fields
-    const MASK_OP_2:   u32 = 0b0000000_00000_00000_000_00000_1111100;
-    const MASK_RD_7:   u32 = 0b0000000_00000_00000_000_11111_0000000;
-    const MASK_F3_12:  u32 = 0b0000000_00000_00000_111_00000_0000000;
-    const MASK_RS1_15: u32 = 0b0000000_00000_11111_000_00000_0000000;
-    const MASK_RS2_20: u32 = 0b0000000_11111_00000_000_00000_0000000;
-    const MASK_F7_25:  u32 = 0b1111111_00000_00000_000_00000_0000000;
+    pub const MASK_OP_2:   u32 = 0b0000000_00000_00000_000_00000_1111100;
+    pub const MASK_RD_7:   u32 = 0b0000000_00000_00000_000_11111_0000000;
+    pub const MASK_F3_12:  u32 = 0b0000000_00000_00000_111_00000_0000000;
+    pub const MASK_RS1_15: u32 = 0b0000000_00000_11111_000_00000_0000000;
+    pub const MASK_RS2_20: u32 = 0b0000000_11111_00000_000_00000_0000000;
+    pub const MASK_F7_25:  u32 = 0b1111111_00000_00000_000_00000_0000000;
 
     // I-type immediate bitmask
-    const MASK_I_IMM12_20_31: u32 = 0b1111111_11111_00000_000_00000_0000000;
+    pub const MASK_I_IMM12_20_31: u32 = 0b1111111_11111_00000_000_00000_0000000;
 
     // S-type immediate bitmasks
-    const MASK_S_IMM5_07_11: u32  = 0b0000000_00000_00000_000_11111_0000000;
-    const MASK_S_IMM7_25_31: u32  = 0b1111111_00000_00000_000_00000_0000000;
+    pub const MASK_S_IMM5_07_11: u32  = 0b0000000_00000_00000_000_11111_0000000;
+    pub const MASK_S_IMM7_25_31: u32  = 0b1111111_00000_00000_000_00000_0000000;
 
     // B-type immediate bitmasks
-    const MASK_B_IMM1_07_07: u32  = 0b0000000_00000_00000_000_00001_0000000;
-    const MASK_B_IMM4_08_11: u32  = 0b0000000_00000_00000_000_11110_0000000;
-    const MASK_B_IMM6_25_30: u32  = 0b0111111_00000_00000_000_00000_0000000;
-    const MASK_B_IMM1_31_31: u32  = 0b1000000_00000_00000_000_00000_0000000;
+    pub const MASK_B_IMM1_07_07: u32  = 0b0000000_00000_00000_000_00001_0000000;
+    pub const MASK_B_IMM4_08_11: u32  = 0b0000000_00000_00000_000_11110_0000000;
+    pub const MASK_B_IMM6_25_30: u32  = 0b0111111_00000_00000_000_00000_0000000;
+    pub const MASK_B_IMM1_31_31: u32  = 0b1000000_00000_00000_000_00000_0000000;
 
     // U-type immediate bitmask
-    const MASK_U_IMM20_12_31: u32 = 0b1111111_11111_11111_111_00000_0000000;
+    pub const MASK_U_IMM20_12_31: u32 = 0b1111111_11111_11111_111_00000_0000000;
 
     // J-type immediate bitmasks
-    const MASK_J_IMM8_12_19: u32  = 0b0000000_00000_11111_111_00000_0000000;
-    const MASK_J_IMM1_20_20: u32  = 0b0000000_00001_00000_000_00000_0000000;
-    const MASK_J_IMM4_21_24: u32  = 0b0000000_11110_00000_000_00000_0000000;
-    const MASK_J_IMM6_25_30: u32  = 0b0111111_00000_00000_000_00000_0000000;
-    const MASK_J_IMM1_31_31: u32  = 0b1000000_00000_00000_000_00000_0000000;
+    pub const MASK_J_IMM8_12_19: u32  = 0b0000000_00000_11111_111_00000_0000000;
+    pub const MASK_J_IMM1_20_20: u32  = 0b0000000_00001_00000_000_00000_0000000;
+    pub const MASK_J_IMM4_21_24: u32  = 0b0000000_11110_00000_000_00000_0000000;
+    pub const MASK_J_IMM6_25_30: u32  = 0b0111111_00000_00000_000_00000_0000000;
+    pub const MASK_J_IMM1_31_31: u32  = 0b1000000_00000_00000_000_00000_0000000;
 
     /// Sign-extend some 32-bit number to 'bits'.
     fn sext32(x: u32, bits: u32) -> i32 {
@@ -512,10 +478,10 @@ impl Rv32 {
     }
 
     /// Decode an array of instructions.
-    pub fn decode_arr<const sz: usize>(enc: &[u32; sz]) -> [Instr; sz] {
+    pub fn disas_arr<const sz: usize>(enc: &[u32; sz]) -> [Instr; sz] {
         let mut res = [Instr::Illegal(0xdeadc0de); sz];
         for idx in 0..sz {
-            res[idx] = Self::decode(enc[idx]);
+            res[idx] = Self::disas(enc[idx]);
         }
         res
     }
@@ -526,7 +492,7 @@ impl Rv32 {
     /// it doesn't necessarily reflect anything useful about a simulated 
     /// implementation of a decoder in hardware. 
     ///
-    pub fn decode(enc: u32) -> Instr {
+    pub fn disas(enc: u32) -> Instr {
         // The positions of these fields are always fixed.
         let op  = (enc & Rv32::MASK_OP_2)   >>  2;
         let rd  = (enc & Rv32::MASK_RD_7)   >>  7;
@@ -549,7 +515,7 @@ impl Rv32 {
             // I-type formats
             Opcode::MISC_MEM => unimplemented!("MISC_MEM encoding"),
             Opcode::SYSTEM   => {
-                let f12 = (enc & Self::MASK_I_IMM12_20_31) >> 20;
+                let f12 = (enc & Rv32::MASK_I_IMM12_20_31) >> 20;
                 match (f12, rs1, rd) { 
                     (0b0000_0000_0000, ArchReg(0), ArchReg(0)) => 
                         Instr::Ecall { prv: f3 },
@@ -610,6 +576,9 @@ impl Rv32 {
 /// RV32I immediate formats
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImmFormat { None, I, S, B, U, J }
+impl Default for ImmFormat {
+    fn default() -> Self { Self::None }
+}
 
 /// RV32I encoded immediate data bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -619,6 +588,12 @@ pub struct ImmData {
     /// 19-bit immediate data
     pub imm19: u32,
 }
+impl Default for ImmData {
+    fn default() -> Self {
+        Self { sign: false, imm19: 0 }
+    }
+}
+
 impl ImmData {
     /// Concatenate the sign bit and shift the immediate data if necessary,
     /// forming a 32-bit value. 

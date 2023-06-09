@@ -271,7 +271,7 @@ fn main() {
         // Decode an instruction and capture the result
         if let Some(dstage) = r_dstage.read() {
             let enc = u32::from_le_bytes(dstage.data);
-            let tmp = Rv32::decode(enc);
+            let tmp = Rv32::disas(enc);
             println!("Decoding  @ {:08x}: {}", dstage.pc, tmp);
             r_estage.write(ExecStage { inst: tmp, pc: dstage.pc });
         } else {

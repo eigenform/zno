@@ -1,5 +1,6 @@
 
 use crate::riscv::rv32i::*;
+use crate::common::*;
 
 /// Immediate storage strategy. 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,6 +15,9 @@ pub enum ImmStorage {
     /// Indicates that storage for an immediate value must be allocated.
     Alloc,
 }
+impl Default for ImmStorage {
+    fn default() -> Self { Self::None }
+}
 impl ImmStorage {
     pub fn from_imm19(imm19: u32) -> Self {
         if imm19 == 0 {
@@ -25,7 +29,7 @@ impl ImmStorage {
 }
 
 /// Immediate control bits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ImmCtl {
     /// Indicates how immediate data is stored in the pipeline.
     pub storage: ImmStorage,
@@ -55,7 +59,7 @@ impl FetchBlock {
         let words = self.as_words();
         for idx in 0..8 {
             let enc = words[idx];
-            let pd = Rv32::decode(enc);
+            let pd = Rv32::disas(enc);
             let (imm_fmt, imm_data) = Rv32::decode_imm(enc);
             if let Instr::Jalr { rd, rs1, simm } = pd {
                 info[idx].rs1 = Some(rs1);
@@ -80,6 +84,12 @@ impl FetchBlock {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImmediateInfo {
+    pub ctl: ImmCtl,
+    pub data: ImmData,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PredecodeInfo {
     pub illegal: bool,
@@ -97,8 +107,14 @@ impl Default for PredecodeInfo {
     fn default() -> Self { 
         Self {
             illegal: true,
-            imm_ctl: ImmCtl { storage: ImmStorage::None, fmt: ImmFormat::None },
-            imm_data: ImmData { sign: false, imm19: 0, },
+            imm_ctl: ImmCtl { 
+                storage: ImmStorage::None, 
+                fmt: ImmFormat::None
+            },
+            imm_data: ImmData { 
+                sign: false, 
+                imm19: 0, 
+            },
             brn_kind: None,
             rs1: None,
         }
@@ -131,6 +147,33 @@ pub enum CfmEntryKind {
     Invalid,
 }
 
+#[derive(Clone, Copy)]
+pub enum DecodeBlockExit {
+    /// This block has no control-flow instructions
+    Sequential,
+    /// Expected fault/exception/trap at this index
+    Fault(usize),
+    /// Expected unconditional jump at this index
+    Jmp(usize),
+    /// Expected procedure call at this index
+    Call(usize),
+    /// Expected procedure return at this index
+    Ret(usize),
+    /// The end of this block must be resolved dynamically
+    Dynamic,
+}
+impl DecodeBlockExit {
+    pub fn to_idx(&self) -> usize {
+        match self {
+            Self::Sequential | Self::Dynamic => 7,
+            Self::Fault(idx) |
+            Self::Jmp(idx) |
+            Self::Call(idx) |
+            Self::Ret(idx) => *idx,
+        }
+    }
+}
+
 
 #[derive(Clone, Copy, Debug)]
 pub struct PredecodeBlock {
@@ -144,11 +187,34 @@ impl PredecodeBlock {
         unsafe { std::mem::transmute(&self.data) }
     }
 
+    pub fn get_imm_info(&self) -> [ImmediateInfo; 8] {
+        let mut res = [ImmediateInfo::default(); 8];
+        for idx in 0..8 {
+            res[idx].ctl  = self.info[idx].imm_ctl;
+            res[idx].data = self.info[idx].imm_data;
+        }
+        res
+    }
+
     /// Returns true if this block is purely sequential (has no branches).
     pub fn is_sequential(&self) -> bool {
         !self.info.iter().any(|info| info.is_branch())
     }
+
+    /// Find the first illegal instruction (if it exists).
+    pub fn first_illegal_inst(&self) -> Option<usize> {
+        self.info.iter().enumerate()
+            .skip(self.start)
+            .find(|(idx, i)| i.illegal)
+            .map(|(idx, i)| idx)
+    }
     
+    /// Find the first control-flow instruction (if it exists).
+    pub fn first_cfi(&self) -> Option<(usize, &PredecodeInfo)> {
+        self.info.iter().enumerate()
+            .skip(self.start)
+            .find(|(idx, i)| i.is_branch())
+    }
 
     /// Return a [Vec] of tuples with the index/info of all control-flow
     /// instructions within this block. 
@@ -159,6 +225,30 @@ impl PredecodeBlock {
             .filter(|(idx, info)| info.is_branch())
             .map(|(idx, info)| (idx, info))
             .collect()
+    }
+
+    /// Return the index of the terminal instruction in this block. 
+    pub fn get_exit(&self) -> DecodeBlockExit {
+        if let Some(idx) = self.first_illegal_inst() {
+            return DecodeBlockExit::Fault(idx);
+        } 
+
+        if self.is_sequential() {
+            return DecodeBlockExit::Sequential;
+        }
+
+        if let Some((idx, info)) = self.first_cfi() {
+            match info.brn_kind.unwrap() {
+                BranchKind::Return => return DecodeBlockExit::Ret(idx),
+                BranchKind::CallIndirect => return DecodeBlockExit::Call(idx),
+                BranchKind::JmpIndirect => return DecodeBlockExit::Jmp(idx),
+                BranchKind::CallRelative => return DecodeBlockExit::Call(idx),
+                BranchKind::JmpRelative => return DecodeBlockExit::Jmp(idx),
+                BranchKind::BrnRelative => return DecodeBlockExit::Dynamic,
+            }
+        } else {
+            unreachable!();
+        }
     }
 
 
@@ -251,10 +341,631 @@ impl PredecodeBlock {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MacroOpKind {
+    None,
+    Alu(AluOp),
+    Ld(RvWidth),
+    St(RvWidth),
+    Sys(SysOp),
+    Brn(BrnOp),
+    Jmp,
+    Illegal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AluOp { None, Add, Sub, Sll, Slt, Sltu, Xor, Srl, Sra, Or, And }
+impl std::fmt::Display for AluOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let name = match self {
+            Self::None => "alu_none",
+            Self::Add =>  "add",
+            Self::Sub =>  "sub",
+            Self::Sll =>  "sll",
+            Self::Slt =>  "slt",
+            Self::Sltu => "sltu",
+            Self::Xor =>  "xor",
+            Self::Srl =>  "srl",
+            Self::Sra =>  "sra",
+            Self::Or =>   "or",
+            Self::And =>  "and",
+        };
+        write!(f, "{}", name)
+    }
+}
+impl AluOp {
+    pub fn from_op(f3: u32, f7: u32) -> Self {
+        match (f3, f7) {
+            (0b000, 0b0000000) => Self::Add,
+            (0b000, 0b0100000) => Self::Sub,
+            (0b001, 0b0000000) => Self::Sll,
+            (0b010, 0b0000000) => Self::Slt,
+            (0b011, 0b0000000) => Self::Sltu,
+            (0b100, 0b0000000) => Self::Xor,
+            (0b101, 0b0000000) => Self::Srl,
+            (0b101, 0b0100000) => Self::Sra,
+            (0b110, 0b0000000) => Self::Or,
+            (0b111, 0b0000000) => Self::And,
+            _ => unimplemented!("ALU op f3={:03b} f7[1]={}", f3, f7),
+        }
+    }
+    pub fn from_opimm(f3: u32, f7: u32) -> Self {
+        match (f3, f7) {
+            (0b000, _) => Self::Add,
+            (0b001, 0b0000000) => Self::Sll,
+            (0b010, _) => Self::Slt,
+            (0b011, _) => Self::Sltu,
+            (0b100, _) => Self::Xor,
+            (0b101, 0b0000000) => Self::Srl,
+            (0b101, 0b0100000) => Self::Sra,
+            (0b110, _) => Self::Or,
+            (0b111, _) => Self::And,
+            _ => unimplemented!("ALU op f3={:03b} f7={:07b}", f3, f7),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrnOp { None, Eq, Ne, Lt, Ge, Ltu, Geu }
+impl std::fmt::Display for BrnOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let name = match self {
+            Self::None => "brn_none",
+            Self::Eq =>  "beq",
+            Self::Ne =>  "bne",
+            Self::Lt =>  "blt",
+            Self::Ge =>  "bge",
+            Self::Ltu => "bltu",
+            Self::Geu =>  "bgeu",
+        };
+        write!(f, "{}", name)
+    }
+}
+
+impl BrnOp {
+    pub fn from(f3: u32) -> Self {
+        match f3 {
+            0b000 => Self::Eq,
+            0b001 => Self::Ne,
+            0b010 => unimplemented!(),
+            0b011 => unimplemented!(),
+            0b100 => Self::Lt,
+            0b101 => Self::Ge,
+            0b110 => Self::Ltu,
+            0b111 => Self::Geu,
+            _ => unimplemented!(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SysOp { None, Ecall(u32), Ebreak(u32) }
+impl std::fmt::Display for SysOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let name = match self {
+            Self::None => "sys_none",
+            Self::Ecall(x) =>  "ecall",
+            Self::Ebreak(x) =>  "ebreak",
+        };
+        write!(f, "{}", name)
+    }
+}
+
+
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Operand { None, Zero, Reg, Imm, Pc, }
+
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MovCtl { None, Op1, Op2, Zero }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PhysRegSrc {
+    None,
+    Local(usize),
+    Global(usize),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PhysRegDst {
+    None,
+    Allocated(usize),
+}
+
+
+#[derive(Clone, Copy, Debug)]
+pub struct MacroOp {
+    pub enc: u32,
+    pub kind: MacroOpKind,
+    pub rr: bool,
+    pub rd: ArchReg,
+    pub pd: PhysRegDst,
+    pub ps1: PhysRegSrc,
+    pub ps2: PhysRegSrc,
+    pub rs1: ArchReg,
+    pub rs2: ArchReg,
+    pub op1: Operand,
+    pub op2: Operand,
+    pub imm: ImmediateInfo,
+    pub mov: MovCtl,
+}
+impl std::fmt::Display for MacroOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let op1_name = match self.op1 {
+            Operand::Pc => "pc".to_string(),
+            Operand::Imm => "#imm".to_string(),
+            Operand::Reg => {
+                match self.ps1 {
+                    PhysRegSrc::None => format!("{}", self.rs1),
+                    PhysRegSrc::Local(prn) |
+                    PhysRegSrc::Global(prn) => format!("p{}", prn),
+                }
+            },
+            Operand::Zero => "0".to_string(),
+            Operand::None => "".to_string(),
+        };
+        let op2_name = match self.op2 {
+            Operand::Pc => "pc".to_string(),
+            Operand::Imm => "#imm".to_string(),
+            Operand::Reg => {
+                match self.ps2 {
+                    PhysRegSrc::None => format!("{}", self.rs2),
+                    PhysRegSrc::Local(prn) |
+                    PhysRegSrc::Global(prn) => format!("p{}", prn),
+                }
+            },
+            Operand::Zero => "0".to_string(),
+            Operand::None => "".to_string(),
+        };
+
+        let dst_name = match self.pd {
+            PhysRegDst::None => format!("{}", self.rd),
+            PhysRegDst::Allocated(prn) => format!("p{}", prn),
+        };
+
+
+        match self.mov {
+            MovCtl::None => {},
+            MovCtl::Zero => {
+                return write!(f, "mov {}, 0", dst_name);
+            },
+            MovCtl::Op1 => {
+                return write!(f, "mov {}, {}", dst_name, op1_name);
+            },
+            MovCtl::Op2 => {
+                return write!(f, "mov {}, {}", dst_name, op2_name);
+            },
+        }
+
+
+        match self.kind {
+            MacroOpKind::None => {
+                write!(f, "mop_none")
+            },
+            MacroOpKind::Jmp => {
+                write!(f, "jmp {}, {}, {}", dst_name, op1_name, op2_name)
+            },
+            MacroOpKind::Brn(op) => {
+                write!(f, "{} {}, {}", op, op1_name, op2_name)
+            },
+            MacroOpKind::Alu(op) => {
+                write!(f, "{} {}, {}, {}", op, dst_name, op1_name, op2_name)
+            },
+            MacroOpKind::Sys(op) => {
+                write!(f, "{} {}, {}", op, op1_name, op2_name)
+            },
+            MacroOpKind::Ld(op) => {
+                write!(f, "load {}, {}, {}, {}", op, dst_name, op1_name, op2_name)
+            },
+            MacroOpKind::St(op) => {
+                write!(f, "store {}, {}, {}, {}", op, self.rs2, op1_name, op2_name)
+            },
+            MacroOpKind::Illegal => {
+                write!(f, "ill {:08x}", self.enc)
+            },
+        }
+    }
+}
+
+
+impl Default for MacroOp {
+    fn default() -> Self {
+        Self {
+            enc: 0xdeadc0de,
+            mov: MovCtl::None,
+            rr: false,
+            kind: MacroOpKind::None,
+            rd: ArchReg(0),
+            pd: PhysRegDst::None,
+            ps1: PhysRegSrc::None,
+            ps2: PhysRegSrc::None,
+            rs1: ArchReg(0),
+            rs2: ArchReg(0),
+            op1: Operand::None,
+            op2: Operand::None,
+            imm: ImmediateInfo::default(),
+        }
+    }
+}
+impl MacroOp {
+    /// This op has a valid register result 
+    pub fn has_rr(&self) -> bool { 
+        self.rr && self.rd != ArchReg(0)
+    }
+    /// This op allocates a new physical register
+    pub fn has_rr_alc(&self) -> bool {
+        self.has_rr() && self.mov == MovCtl::None
+    }
+
+    pub fn get_pd(&self) -> Option<usize> {
+        match self.pd {
+            PhysRegDst::None => None,
+            PhysRegDst::Allocated(prn) => Some(prn),
+        }
+    }
+    pub fn get_ps1(&self) -> Option<usize> {
+        match self.ps1 {
+            PhysRegSrc::None => None,
+            PhysRegSrc::Local(prn) | PhysRegSrc::Global(prn) => Some(prn),
+        }
+    }
+    pub fn get_ps2(&self) -> Option<usize> {
+        match self.ps2 {
+            PhysRegSrc::None => None,
+            PhysRegSrc::Local(prn) | PhysRegSrc::Global(prn) => Some(prn),
+        }
+    }
+
+}
+
+
+#[derive(Clone, Copy)]
 pub struct DecodeBlock {
     pub start: usize,
+    pub exit: DecodeBlockExit,
     pub addr: usize,
-    pub data: [Instr; 8],
+    pub data: [MacroOp; 8],
+}
+impl DecodeBlock {
+    pub fn print(&self) {
+        for idx in 0..8 {
+            let pc = self.start.wrapping_add(idx << 2);
+            if idx < self.start || idx > self.exit.to_idx() {
+                println!("{:08x}: X {}", pc, Rv32::disas(self.data[idx].enc));
+            } else {
+                println!("{:08x}:   {}", pc, Rv32::disas(self.data[idx].enc));
+            }
+        }
+    }
+
+    pub fn num_preg_allocs(&self) -> usize {
+        self.data.iter().skip(self.start).take(self.exit_idx()+1)
+            .filter(|mop| mop.has_rr_alc())
+            .count()
+    }
+
+    pub fn exit_idx(&self) -> usize { self.exit.to_idx() }
+
+    pub fn iter_seq(&self) 
+        -> impl Iterator<Item=(usize, &MacroOp)> 
+    {
+        self.data.iter().enumerate().skip(self.start)
+            .take_while(|(idx, _)| *idx <= self.exit_idx())
+    }
+
+    pub fn iter_seq_mut(&mut self) 
+        -> impl Iterator<Item=(usize, &mut MacroOp)> 
+    {
+        self.data.iter_mut().enumerate().skip(self.start)
+            .take_while(|(idx, mop)| idx <= &mut self.exit.to_idx())
+    }
+
+
+    /// Return the index of the first provider of an architectural register
+    /// within the block.
+    pub fn find_first_def(&self, arn: ArchReg) -> Option<usize> {
+        self.iter_seq().find(|(idx, mop)| mop.has_rr() && mop.rd == arn)
+            .map(|(idx, _)| idx)
+    }
+
+    /// Given the index of a mop, return the index of *most-recent* previous
+    /// provider for a particular architectural register. 
+    pub fn find_provider(&self, sink_idx: usize, arn: ArchReg) -> Option<usize> {
+        assert!(sink_idx >= self.start);
+        assert!(sink_idx <= self.exit_idx());
+
+        for pidx in (self.start..sink_idx).rev() {
+            let provider = self.data[pidx];
+            if provider.has_rr() && provider.rd == arn {
+                return Some(pidx);
+            }
+        }
+        None
+
+    }
+
+
+    pub fn calc_local_deps(&self) -> Vec<(usize, Option<usize>, Option<usize>)> {
+        let mut res = Vec::new();
+
+        for sidx in self.start+1..=self.exit_idx() {
+            let sink = self.data[sidx];
+            // Skip ops without any source register operands
+            if sink.op1 != Operand::Reg && sink.op2 != Operand::Reg {
+                continue;
+            }
+
+            let rs1_match = if sink.op1 == Operand::Reg {
+                self.find_provider(sidx, sink.rs1)
+            } else { 
+                None 
+            };
+            let rs2_match = if sink.op2 == Operand::Reg { 
+                self.find_provider(sidx, sink.rs2)
+            } else { 
+                None 
+            };
+            res.push((sidx, rs1_match, rs2_match));
+        }
+        res
+    }
+
+    // 1. If a provider moves zero, we can propagate it. 
+    //
+    // 2. Otherwise, the existence of a provider means that we cannot
+    //    treat the source register as zero. 
+    //
+    // 3. When no provider exists, we can respect the zero bits
+    //    indicated by the register map
+    pub fn rewrite_dyn_zero_operands(&mut self, zeroes: [bool; 32]) -> usize {
+        let mut num_rewritten = 0;
+
+        for idx in self.start..=self.exit_idx() {
+            let op = self.data[idx];
+
+            if op.op1 == Operand::Reg {
+                if let Some(pidx) = self.find_provider(idx, op.rs1) {
+                    if self.data[pidx].mov == MovCtl::Zero {
+                        self.data[idx].op1 = Operand::Zero;
+                        num_rewritten += 1;
+                    }
+                } 
+                else {
+                    if zeroes[op.rs1.as_usize()] {
+                        self.data[idx].op1 = Operand::Zero;
+                        num_rewritten += 1;
+                    }
+                }
+            }
+
+            if op.op2 == Operand::Reg {
+                if let Some(pidx) = self.find_provider(idx, op.rs2) {
+                    if self.data[pidx].mov == MovCtl::Zero {
+                        self.data[idx].op2 = Operand::Zero;
+                        num_rewritten += 1;
+                    }
+                } 
+                else {
+                    if zeroes[op.rs2.as_usize()] {
+                        self.data[idx].op2 = Operand::Zero;
+                        num_rewritten += 1;
+                    }
+                }
+            }
+        }
+        num_rewritten
+
+    }
+
+    pub fn rewrite_static_zero_operands(&mut self) -> usize {
+        let mut num_rewritten = 0;
+        for mop in self.data.iter_mut() {
+            match mop.op1 {
+                // NOTE: op1 always corresponds to rs1 here
+                Operand::Reg => if mop.rs1.is_zero() {
+                    mop.op1 = Operand::Zero;
+                    num_rewritten += 1;
+                },
+                Operand::Imm => if mop.imm.ctl.storage == ImmStorage::Zero {
+                    mop.op1 = Operand::Zero;
+                    num_rewritten += 1;
+                },
+                _ => {},
+            }
+            match mop.op2 {
+                // NOTE: op2 always corresponds to rs2 here
+                Operand::Reg => if mop.rs2.is_zero() {
+                    mop.op2 = Operand::Zero;
+                    num_rewritten += 1;
+                },
+                Operand::Imm => if mop.imm.ctl.storage == ImmStorage::Zero {
+                    mop.op2 = Operand::Zero;
+                    num_rewritten += 1;
+                },
+                _ => {},
+            }
+        }
+        num_rewritten
+    }
+
+    pub fn rewrite_mov_ops(&mut self) -> usize {
+        let mut num_rewritten = 0;
+        for idx in self.start..=self.exit_idx() {
+            let mop = self.data[idx];
+            if mop.mov != MovCtl::None {
+                continue;
+            }
+
+            let op1_zero = mop.op1 == Operand::Zero;
+            let op2_zero = mop.op2 == Operand::Zero;
+
+            let regop = mop.op1 == Operand::Reg && mop.op2 == Operand::Reg;
+            let regeq = mop.rs1 == mop.rs2;
+
+            let mov_op1 = op2_zero && 
+                (mop.kind == MacroOpKind::Alu(AluOp::Add) ||
+                mop.kind == MacroOpKind::Alu(AluOp::Or) ||
+                mop.kind == MacroOpKind::Alu(AluOp::Sub));
+
+            let mov_op2 = op1_zero && 
+                (mop.kind == MacroOpKind::Alu(AluOp::Add) ||
+                mop.kind == MacroOpKind::Alu(AluOp::Or));
+
+            let mov_zero_xs = regop && regeq &&
+                (mop.kind == MacroOpKind::Alu(AluOp::Sub) ||
+                mop.kind == MacroOpKind::Alu(AluOp::Xor));
+            let mov_zero_and = (op1_zero || op2_zero) &&
+                mop.kind == MacroOpKind::Alu(AluOp::And);
+
+            // Zero idioms
+            if mov_zero_xs || mov_zero_and {
+                self.data[idx].mov = MovCtl::Zero;
+                num_rewritten += 1;
+            } 
+            // Move the first operand
+            else if mov_op1 {
+                self.data[idx].mov = if op1_zero { 
+                    MovCtl::Zero 
+                } else { 
+                    MovCtl::Op1 
+                };
+                num_rewritten += 1;
+            } 
+            // Move the second operand
+            else if mov_op2 {
+                self.data[idx].mov = if op2_zero { 
+                    MovCtl::Zero 
+                } else { 
+                    MovCtl::Op2 
+                };
+                num_rewritten += 1;
+            }
+        }
+        num_rewritten
+    }
+
+}
+
+#[derive(Clone, Copy)]
+pub struct MicroOp {
+    pd: Option<usize>,
+}
+impl Default for MicroOp {
+    fn default() -> Self {
+        Self {
+            pd: None,
+        }
+    }
+}
+
+
+
+pub struct RenamedBlock {
+    start: usize,
+    addr: usize,
+    pub data: [MicroOp; 8],
+    pub imm: [ImmediateInfo; 8],
+}
+
+pub struct Freelist<const SZ: usize> {
+    wp_allocated: Option<Vec<usize>>,
+    arr: [bool; SZ],
+}
+impl <const SZ: usize> Freelist<SZ> {
+    pub fn new() -> Self {
+        let mut res = Self {
+            wp_allocated: None,
+            arr: [true; SZ],
+        };
+        res.arr[0] = false;
+        res
+    }
+    pub fn num_free(&self) -> usize {
+        self.arr.iter().filter(|s| **s == true).count()
+    }
+    pub fn sample_alcs(&self, n: usize) -> Option<Vec<usize>> {
+        if n > self.num_free() {
+            return None;
+        }
+        let res: Vec<usize> = self.arr.iter()
+            .enumerate()
+            .filter(|(prn,s)| **s == true)
+            .map(|(idx, s)| idx)
+            .take(n).collect();
+        Some(res)
+    }
+
+    pub fn drive_allocated(&mut self, alcs: Vec<usize>) {
+        self.wp_allocated = Some(alcs);
+    }
+}
+impl <const SZ: usize> Clocked for Freelist<SZ> {
+    fn update(&mut self) {
+        if let Some(alcs) = self.wp_allocated.take() {
+            for prn in alcs {
+                assert!(self.arr[prn] == true);
+                self.arr[prn] = false;
+            }
+        }
+    }
+}
+
+
+pub struct RegisterMap {
+    wp_pending: Vec<(ArchReg, usize)>,
+    data: [usize; 32],
+    zero: [bool; 32],
+}
+impl RegisterMap {
+    pub fn new() -> Self { 
+        let mut zero = [false; 32];
+        zero[0] = true;
+        let mut data = [ 
+             0,  1,  2,  3,  4,  5,  6,  7,
+             8,  9, 10, 11, 12, 13, 14, 15, 
+            16, 17, 18, 19, 20, 21, 22, 23, 
+            24, 25, 26, 27, 28, 29, 30, 31,
+        ];
+        Self { 
+            zero, 
+            data,
+            wp_pending: Vec::new(),
+        }
+    }
+    pub fn sample_rp(&self, arn: ArchReg) -> (usize, bool) {
+        let idx = arn.as_usize();
+        (self.data[idx], self.zero[idx])
+    }
+    pub fn sample_zeroes(&self) -> [bool; 32] {
+        self.zero
+    }
+
+    pub fn drive_wp(&mut self, arn: ArchReg, prn: usize) {
+        assert!(arn != ArchReg(0));
+        self.wp_pending.push((arn, prn));
+    }
+    pub fn print(&self) {
+
+        println!("[MAP] Register map state:");
+        for idx in (0..32).step_by(4) {
+            println!(" {:2} => {:3} | {:2} => {:3} | {:2} => {:3} | {:2} => {:3}",
+            idx, self.data[idx], 
+            idx+1, self.data[idx+1], 
+            idx+2, self.data[idx+2], 
+            idx+3, self.data[idx+3], 
+            );
+        }
+    }
+
+}
+
+impl Clocked for RegisterMap {
+    fn update(&mut self) {
+        while let Some((arn, prn)) = self.wp_pending.pop() {
+            self.data[arn.as_usize()] = prn;
+            self.zero[arn.as_usize()] = prn == 0;
+        }
+    }
 }
 
 
