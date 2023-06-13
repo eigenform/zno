@@ -75,7 +75,10 @@ impl MacroOp {
                 res.op2 = Operand::Imm;
             },
             Opcode::JALR     => {
-                res.kind = MacroOpKind::Jmp;
+                let rd_lr = res.rd == ArchReg(1) || res.rd == ArchReg(5);
+                let rs1_lr = res.rs1 == ArchReg(1) || res.rs1 == ArchReg(5);
+
+                res.kind = MacroOpKind::Jmp(JmpOp::JmpIndirect);
                 res.rr = true;
                 res.op1 = Operand::Reg;
                 res.op2 = Operand::Imm;
@@ -117,8 +120,8 @@ impl MacroOp {
 
             // J-type formats
             Opcode::JAL    => {
-                res.kind = MacroOpKind::Jmp;
-                res.rr = true;
+                res.kind = MacroOpKind::Jmp(JmpOp::JmpRelative);
+                res.rr  = true;
                 res.op1 = Operand::Pc;
                 res.op2 = Operand::Imm;
             },

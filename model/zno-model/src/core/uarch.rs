@@ -349,7 +349,7 @@ pub enum MacroOpKind {
     St(RvWidth),
     Sys(SysOp),
     Brn(BrnOp),
-    Jmp,
+    Jmp(JmpOp),
     Illegal,
 }
 
@@ -436,6 +436,15 @@ impl BrnOp {
             _ => unimplemented!(),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JmpOp {
+    JmpRelative,
+    JmpIndirect,
+    CallRelative,
+    CallIndirect,
+    Return,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -542,7 +551,7 @@ impl std::fmt::Display for MacroOp {
             MacroOpKind::None => {
                 write!(f, "mop_none")
             },
-            MacroOpKind::Jmp => {
+            MacroOpKind::Jmp(op) => {
                 write!(f, "jmp {}, {}, {}", dst_name, op1_name, op2_name)
             },
             MacroOpKind::Brn(op) => {
@@ -588,6 +597,18 @@ impl Default for MacroOp {
     }
 }
 impl MacroOp {
+
+    /// This op is non-schedulable (ie. a 'nop', 'mov', or something which
+    /// is otherwise (a) already resolved, or (b) can be trivially resolved
+    /// at retire. 
+    pub fn is_nonsched(&self) -> bool {
+        let is_mov = self.mov != MovCtl::None;
+
+        //let is_jal = self.kind == MacroOpKind::Jmp(JmpOp::JmpRelative);
+
+        is_mov
+    }
+
     /// This op has a valid register result 
     pub fn has_rr(&self) -> bool { 
         self.rr && self.rd != ArchReg(0)
@@ -848,24 +869,34 @@ impl DecodeBlock {
 
 #[derive(Clone, Copy)]
 pub struct MicroOp {
+    kind: MicroOpKind,
     pd: Option<usize>,
+    ps1: Option<usize>,
+    ps2: Option<usize>,
+    op1: Operand,
+    op2: Operand,
 }
 impl Default for MicroOp {
     fn default() -> Self {
         Self {
+            kind: MicroOpKind::None,
             pd: None,
+            ps1: None,
+            ps2: None,
+            op1: Operand::None,
+            op2: Operand::None,
         }
     }
 }
-
-
-
-pub struct RenamedBlock {
-    start: usize,
-    addr: usize,
-    pub data: [MicroOp; 8],
-    pub imm: [ImmediateInfo; 8],
+impl MicroOp {
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MicroOpKind {
+    None,
+    Alu(AluOp),
+}
+
 
 pub struct Freelist<const SZ: usize> {
     wp_allocated: Option<Vec<usize>>,
@@ -968,5 +999,20 @@ impl Clocked for RegisterMap {
     }
 }
 
+
+pub struct PhysicalRegisterFile<const SIZE: usize> {
+    data: [u32; SIZE],
+}
+impl <const SIZE: usize> PhysicalRegisterFile<SIZE> {
+    pub fn new() -> Self {
+        Self {
+            data: [0; SIZE],
+        }
+    }
+}
+impl <const SIZE: usize> Clocked for PhysicalRegisterFile<SIZE> {
+    fn update(&mut self) {
+    }
+}
 
 
