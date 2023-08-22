@@ -10,8 +10,6 @@ during predecode:
 - Does a branch target lie inside/outside this fetch block? 
 - Despite the existence of branch instructions, is it still possible for this
   fetch block to fall through to the next-sequential fetch block?
-
-
 ```
 
 After completing a transaction, the fetch unit passes a fetch block to the

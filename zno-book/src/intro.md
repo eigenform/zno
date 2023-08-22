@@ -1,5 +1,11 @@
 # Introduction
 
+```admonish note
+As of mid-2023, this design is still mostly *conceptual* and largely 
+consists of fragments of partially-completed ideas in RTL. There are no 
+synthesizable artifacts, and this will probably be the case for some time. 
+```
+
 This project is a vehicle for exploring the following questions:
 
 - How are modern [superscalar, out-of-order] microprocessors implemented?
@@ -9,6 +15,8 @@ This project is a vehicle for exploring the following questions:
 Currently, `ZNO` is a RISC-V machine designed around the RV32I base integer 
 instruction set. This seemed like sufficient ground for exploring many
 of the problems involved in the design of modern machines. 
+Other aspects of the RISC-V ISA can probably be added after the 
+overall design has stabilized somewhat. 
 
 ## Rough Overview
 
@@ -25,7 +33,7 @@ The `ZNO` core is split into three pieces:
 `ZNO` is written in [Chisel](https://github.com/chipsalliance/chisel), 
 an HDL embedded in Scala. Chisel internally represents designs with 
 [FIRRTL](https://github.com/chipsalliance/firrtl-spec), which may be lowered
-into other representations via [CIRCT](https://github.com/llvm/circt).
+into other representations (like Verilog) via [CIRCT](https://github.com/llvm/circt).
 
 ## Testing/Simulating the Design
 
