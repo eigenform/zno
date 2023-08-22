@@ -10,6 +10,23 @@ import zno.common._
 import zno.riscv.isa._
 import zno.core.uarch._
 
+class DecodeUnit(implicit p: ZnoParam) extends Module {
+  val io = IO(new Bundle {
+    val fblk = Flipped(Decoupled(new FetchBlock))
+    val dblk = Decoupled(new DecodeBlock)
+  })
+  val dec = Seq.fill(p.dec_win.size)(Module(new UopDecoder))
+
+  for (idx <- 0 until p.dec_win.size) {
+    dec(idx).inst          := io.fblk.bits.data(idx)
+    io.dblk.bits.data(idx) := dec(idx).out
+  }
+  io.dblk.bits.addr := io.fblk.bits.addr
+  io.dblk.valid     := io.fblk.valid
+  io.fblk.ready     := io.dblk.ready
+}
+
+
 class IntegerDispatchIO(implicit p: ZnoParam) extends Bundle {
     val uops     = Decoupled(Vec(p.int_disp_win.size, Valid(new IntUop)))
     val num_free = Input(p.int_disp_win.idx())

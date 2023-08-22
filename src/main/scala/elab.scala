@@ -42,14 +42,15 @@ object Elaborate extends App {
     val name = ty.className
     val width = ty.getWidth
     //val width_kb = width.toFloat / 1024.toFloat
-    println(f"${name}%16s: ${width}%db")
+    println(f"${name}%16s: ${width}%dbit")
   }
 
   def print_width_arr[T <: Data](name: String, capacity: Int, ty: T) = {
     val width = ty.getWidth
     val size_b = width * capacity
     val size_kb = size_b.toFloat / 1024.toFloat
-    println(f"${name}%16s: ${size_kb}%.2fkb")
+    val size_kbyte = size_kb.toFloat / 8.toFloat 
+    println(f"${name}%16s: ${size_kb}%.2fkbit (${size_kbyte}%.2fkB)")
   }
 
   println("============================================")
@@ -68,7 +69,7 @@ object Elaborate extends App {
   println("Approximate structure sizes: ")
   print_width_arr("FBQ", p.fbq.size, new zno.core.uarch.FetchBlock())
   print_width_arr("DBQ", p.dbq.size, new zno.core.uarch.DecodeBlock())
-  print_width_arr("CFM tags", p.cfm.size, new zno.core.uarch.FetchBlockAddr)
+  print_width_arr("CFM tags", p.cfm.size, p.FetchBlockAddr())
   print_width_arr("CFM pdblk", p.cfm.size, new zno.core.uarch.PredecodeBlock())
   println("============================================")
 

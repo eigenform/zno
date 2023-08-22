@@ -9,9 +9,9 @@ import chisel3.experimental.OpaqueType
 import zno.riscv.isa._
 
 // Generic helper for defining common properties of sized/indexible objects.
-class SizeDecl(s: Int) {
+class SizeDecl(sz: Int) {
   // The capacity of this structure (number of entries)
-  val size: Int = s
+  val size: Int = sz
   // The width (in bits) of an index into this structure
   val idxWidth: Int = log2Ceil(size)
   // The [UInt] type representing an index into this structure
@@ -19,45 +19,92 @@ class SizeDecl(s: Int) {
 }
 
 // Helper for computing fetch block geometry
-class FetchBlockParams(bytes: Int) {
+class FetchBlockParams(bytes: Int, xlen: Int) {
   require(isPow2(bytes), "Fetch block size must be a power of 2")
 
   val numBytes: Int = bytes
+  val numWords: Int = (this.numBytes >> 2)
+
+  val wordIdxWidth: Int = log2Ceil(numWords)
   val byteIdxWidth: Int = log2Ceil(numBytes)
+
+  // Type of an index into a fetch block (by word)
+  def wordIdx(): UInt = UInt(this.wordIdxWidth.W)
+  // Type of an index into a fetch block (by byte)
   def byteIdx(): UInt = UInt(this.byteIdxWidth.W)
 
-  val numWords: Int = (this.numBytes >> 2)
-  val wordIdxWidth: Int = log2Ceil(numWords)
-  def wordIdx(): UInt = UInt(this.wordIdxWidth.W)
+  // Type of the fetch block contents (in words)
+  def dataWords(): Vec[UInt] = Vec(this.numWords, UInt(xlen.W))
+  // Type of the fetch block contents (in bytes)
+  def dataBytes(): Vec[UInt] = Vec(this.numBytes, UInt(8.W))
 }
 
+// Container for register file parameters
+class RfParams(sz: Int,
+  num_rp: Int = 1,
+  num_wp: Int = 1,
+){
+  val size: Int = sz
+  val idxWidth: Int = log2Ceil(size)
+  def idx(): UInt = UInt(this.idxWidth.W)
+  val numReadPorts: Int  = num_rp
+  val numWritePorts: Int = num_wp
+}
 
 // ----------------------------------------------------------------------------
 // Core configuration
 // Variables used to parameterize different aspects of the ZNO core. 
+//
+// The current strategy is: when writing bundles/modules, pass [ZnoParam] 
+// around as an implicit parameter, ie.
+//
+//  class MyModule(implicit p: ZnoParam) extends Module { 
+//    val foo = Wire(p.xlen.W)
+//    ... 
+//  }
+//
 
 case class ZnoParam() {
   // General-purpose register width
   val xlen: Int = 32
 
-  val fblk = new FetchBlockParams(32) // Fetch block geometry
+  val fblk = new FetchBlockParams(32, 32) // Fetch block geometry
   val dec_win = new SizeDecl(8)       // Decode bandwidth
   val int_disp_win = new SizeDecl(6)  // Integer dispatch bandwidth
 
-  val ftq = new SizeDecl(16)  // Fetch Target Queue
+  val ras = new SizeDecl(32)  // Return Address Stack
+
+  val ftq = new SizeDecl(8)   // Fetch Target Queue
   val fbq = new SizeDecl(16)  // Fetch Block Queue
   val dbq = new SizeDecl(16)  // Decode Block Queue
   val cfm = new SizeDecl(256) // Control-flow Map
   val rob = new SizeDecl(128) // Reorder Buffer
-  val arf = new SizeDecl(32)  // Architectural Register File
-  val prf = new SizeDecl(256) // Physical Register File
+
+  // Architectural Register File
+  val arf = new SizeDecl(32)
+  // Physical Register File
+  val prf = new RfParams(256,
+    num_rp = 2,
+    num_wp = 1,
+  ) 
 
   // These are shortcuts for constructing certain types
   object Arn { def apply(): UInt = arf.idx() }
   object Prn { def apply(): UInt = prf.idx() }
-  object FetchBlockData { 
-    def apply(): Vec[UInt] = Vec(fblk.numWords, UInt(xlen.W)) 
+  object PhysicalAddr { def apply(): UInt = UInt(xlen.W) }
+  object VirtualAddr { def apply(): UInt = UInt(xlen.W) }
+
+  object ProgramCounter { 
+    def apply(): UInt = UInt(xlen.W) 
   }
+
+  object FetchBlockAddr {
+    def apply(): UInt = UInt((xlen - fblk.byteIdxWidth).W)
+    def fromProgramCounter(pc: UInt): UInt = {
+      pc(xlen-1, fblk.byteIdxWidth-1)
+    }
+  }
+
 
   // Sanity checks for parameters
   require(dec_win.size == fblk.numWords,
@@ -67,79 +114,104 @@ case class ZnoParam() {
 // ----------------------------------------------------------------------------
 // Opaque types
 //
-// The idea here is that we can more-strictly constrain what operations are 
-// allowed on particular datatypes.
+// The idea here is that we can more-strictly constrain what *Scala* operations
+// are allowed on particular datatypes.
 //
 // Note that we're still defining a public '_underlying()' that exposes
 // the actual underlying datatype, but this is really only supposed to be
 // used to implement conversions between these types.
+//
+// NOTE: This is kind of a PITA because these don't work transparently with
+// chiseltest. 
 
-class ProgramCounter(implicit p: ZnoParam) 
-  extends Record with OpaqueType 
-{
-  private val underlying = UInt(p.xlen.W)
-  val elements = SeqMap("" -> underlying)
-  def _underlying(): UInt = { this.underlying }
+//class ProgramCounter(implicit p: ZnoParam) 
+//  extends Record with OpaqueType 
+//{
+//  private val underlying = UInt(p.xlen.W)
+//  val elements = SeqMap("" -> underlying)
+//  def _underlying(): UInt = { this.underlying }
+//
+//  /// Return the next sequential value
+//  def inc(): ProgramCounter = {
+//    val _w = Wire(new ProgramCounter)
+//    _w.underlying := this.underlying + 4.U
+//    _w
+//  }
+//
+//  /// Support addition with UInt
+//  def +(that: UInt): ProgramCounter = {
+//    val _w = Wire(new ProgramCounter)
+//    _w.underlying := this.underlying + that
+//    _w
+//  }
+//
+//  /// Convert this value to the appropriate [FetchBlockAddr]
+//  def toFetchBlockAddr(): FetchBlockAddr = {
+//    val _w = Wire(new FetchBlockAddr)
+//    _w._underlying() := this.underlying(p.xlen-1, p.fblk.byteIdxWidth-1)
+//    _w
+//  }
+//
+//  def fromConstantUInt(value: BigInt): ProgramCounter = {
+//    val _w = Wire(new ProgramCounter)
+//    _w.underlying := value.U(p.xlen.W)
+//    _w
+//  }
+//}
+//
+//class FetchBlockAddr(implicit p: ZnoParam) 
+//  extends Record with OpaqueType 
+//{
+//  val underlying_width: Int = p.xlen - p.fblk.byteIdxWidth
+//  private val underlying = UInt(this.underlying_width.W)
+//  val elements = SeqMap("" -> underlying)
+//  def _underlying(): UInt = { this.underlying }
+//
+//  // Return the next-sequential fetch block address
+//  def next(): FetchBlockAddr = {
+//    val _w = Wire(new FetchBlockAddr)
+//    _w.underlying := this.underlying + 1.U
+//    _w
+//  }
+//
+//  // Return a program counter value for this fetch block address
+//  def toProgramCounter(): ProgramCounter = {
+//    val _w = Wire(new ProgramCounter)
+//    _w._underlying() := Cat(this.underlying, 0.U(p.fblk.byteIdxWidth.W))
+//    _w
+//  }
+//
+//  def toVirtualAddress(): VirtualAddress = {
+//    val _w = Wire(new VirtualAddress)
+//    _w._underlying() := Cat(this.underlying, 0.U(p.fblk.byteIdxWidth.W))
+//    _w
+//  }
+//
+//}
+//
+//class PhysicalAddress(implicit p: ZnoParam) 
+//  extends Record with OpaqueType 
+//{
+//  private val underlying = UInt(p.xlen.W)
+//  val elements = SeqMap("" -> underlying)
+//  def _underlying(): UInt = { this.underlying }
+//}
+//
+//class VirtualAddress(implicit p: ZnoParam) 
+//  extends Record with OpaqueType 
+//{
+//  private val underlying = UInt(p.xlen.W)
+//  val elements = SeqMap("" -> underlying)
+//  def _underlying(): UInt = { this.underlying }
+//}
 
-  /// Return the next sequential value
-  def inc(): ProgramCounter = {
-    val _w = Wire(new ProgramCounter)
-    _w.underlying := this.underlying + 4.U
-    _w
-  }
+// ----------------------------------------------------------------------------
+// Common interfaces for bundles
 
-  /// Support addition with UInt
-  def +(that: UInt): ProgramCounter = {
-    val _w = Wire(new ProgramCounter)
-    _w.underlying := this.underlying + that
-    _w
-  }
-
-  /// Convert this value to the appropriate [FetchBlockAddr]
-  def toFetchBlockAddr(): FetchBlockAddr = {
-    val _w = Wire(new FetchBlockAddr)
-    _w._underlying() := this.underlying(p.xlen-1, p.fblk_width-1)
-    _w
-  }
-}
-
-class FetchBlockAddr(implicit p: ZnoParam) 
-  extends Record with OpaqueType 
-{
-  val underlying_width: Int = p.xlen - p.fblk_width
-  private val underlying = UInt(this.underlying_width.W)
-  val elements = SeqMap("" -> underlying)
-  def _underlying(): UInt = { this.underlying }
-
-  // Return the next-sequential fetch block address
-  def next(): FetchBlockAddr = {
-    val _w = Wire(new FetchBlockAddr)
-    _w.underlying := this.underlying + 1.U
-    _w
-  }
-
-  // Return the full 
-  def toProgramCounter(): ProgramCounter = {
-    val _w = Wire(new ProgramCounter)
-    _w._underlying() := Cat(this.underlying, 0.U(p.fblk_width.W))
-    _w
-  }
-}
-
-class PhysicalAddress(implicit p: ZnoParam) 
-  extends Record with OpaqueType 
-{
-  private val underlying = UInt(p.xlen.W)
-  val elements = SeqMap("" -> underlying)
-  def _underlying(): UInt = { this.underlying }
-}
-
-class VirtualAddress(implicit p: ZnoParam) 
-  extends Record with OpaqueType 
-{
-  private val underlying = UInt(p.xlen.W)
-  val elements = SeqMap("" -> underlying)
-  def _underlying(): UInt = { this.underlying }
+// Implemented for bundles that contain a set of macro-ops
+trait HasMacroOps {
+  // Get a macro-op by index
+  def get_mop(idx: UInt): MacroOp
 }
 
 
@@ -147,27 +219,36 @@ class VirtualAddress(implicit p: ZnoParam)
 // ----------------------------------------------------------------------------
 // Control-flow/branch prediction definitions
 
+
 /// Different types of architectural control-flow events
 object ArchCfEventKind extends ChiselEnum {
+  // Reset vector
   val RESET  = Value
+  // A branch instruction retired in the backend
   val RETIRED_BRANCH = Value
 }
-
+class ArchitecturalCfEvent(implicit p: ZnoParam) extends Bundle {
+  val kind = ArchCfEventKind()
+  val npc  = p.ProgramCounter()
+}
 /// Different types of speculative control-flow events
 object SpecCfEventKind extends ChiselEnum {
   val PREDICT = Value
 }
-
-class ArchitecturalCfEvent(implicit p: ZnoParam) extends Bundle {
-  val kind = ArchCfEventKind()
-  val npc  = new ProgramCounter
-}
-
 class SpeculativeCfEvent(implicit p: ZnoParam) extends Bundle {
   val kind = SpecCfEventKind()
-  val npc  = new ProgramCounter
+  val npc  = p.ProgramCounter()
 }
 
+object CfEventKind extends ChiselEnum {
+  val RESET = Value
+  val RETIRED_BRANCH = Value
+  val PREDICTED_BRANCH = Value
+}
+class ControlFlowEvent(implicit p: ZnoParam) extends Bundle {
+  val kind = CfEventKind()
+  val npc  = p.ProgramCounter()
+}
 
 
 // ----------------------------------------------------------------------------
@@ -175,35 +256,79 @@ class SpeculativeCfEvent(implicit p: ZnoParam) extends Bundle {
 
 // Connection between the frontcore and instruction memories
 class ZnoInstBusIO(implicit p: ZnoParam) extends Bundle {
-  val req  = Decoupled(new FetchBlockAddr)
+  val req  = Decoupled(p.FetchBlockAddr())
   val resp = Flipped(Decoupled(new FetchBlock))
 }
 
 // A block of fetched bytes. 
 class FetchBlock(implicit p: ZnoParam) extends Bundle {
   // The address of this block
-  val addr = new FetchBlockAddr
+  val addr = p.FetchBlockAddr()
   // Fetched bytes in this block
-  val data = p.FetchBlockData()
+  val data = p.fblk.dataWords()
   // Default values
   def drive_defaults(): Unit = {
     this.addr := 0.U
-    this.data := 0.U.asTypeOf(p.FetchBlockData())
+    this.data := 0.U.asTypeOf(p.fblk.dataWords())
   }
 }
 
 // ----------------------------------------------------------------------------
-// Instruction decode definitions
+// Instruction Predecode definitions
 
-class PredecodeBlock(implicit p: ZnoParam) extends Bundle {
-  val addr = new FetchBlockAddr
-  val data = Vec(p.dec_win.size, new PdMop)
+// Different ways of computing a branch target address
+object BranchAddressingType extends ChiselEnum {
+  val BA_NONE = Value
+  val BA_REL  = Value // "PC-relative"
+  val BA_DIR  = Value // "Direct" (ie. x0 + immediate)
+  val BA_IND  = Value // "Indirect" (ie. rs1 + immediate)
 }
 
-// A block of decoded micro-ops.
-class DecodeBlock(implicit p: ZnoParam) extends Bundle {
-  val addr = new FetchBlockAddr
+// Different types of [abstract] branch operations.
+object BranchType extends ChiselEnum {
+  val BT_NONE     = Value
+  val BT_BRN      = Value
+  val BT_JAL      = Value
+  val BT_JALR     = Value
+  val BT_RET      = Value
+  val BT_CALL     = Value
+}
+
+class BranchInfo(implicit p: ZnoParam) extends Bundle {
+  val btype    = BranchType()
+  val batype   = BranchAddressingType()
+}
+
+class PredecodeBlock(implicit p: ZnoParam) extends Bundle {
+  val fblk = new FetchBlock
+  val pdmops = Vec(p.dec_win.size, new PdMop)
+}
+
+// A "predecoded" macro-op
+class PdMop(implicit p: ZnoParam) extends Bundle {
+  val ill      = Bool()
+  val binfo    = new BranchInfo
+  val imm_data = new RvImmData
+  val imm_ctl  = new ImmCtl
+}
+
+
+// ----------------------------------------------------------------------------
+// Instruction decode definitions
+
+// A block of decoded micro-ops (produced by the decode unit).
+class DecodeBlock(implicit p: ZnoParam) extends Bundle 
+  with HasMacroOps
+{
+  val addr = p.FetchBlockAddr()
+  val cfm_idx = p.cfm.idx()
   val data = Vec(p.dec_win.size, new MacroOp)
+  def size(): Int = p.dec_win.size
+
+  override def get_mop(idx: UInt): MacroOp = {
+    require(idx.getWidth == p.dec_win.idxWidth)
+    this.data(idx)
+  }
 }
 
 // Describing the different kinds of instruction operands. 
@@ -241,24 +366,6 @@ object BrnOp extends ChiselEnum {
   val B_GEU = Value
 }
 
-// Different types of [abstract] branch operations.
-object BranchType extends ChiselEnum {
-  val BT_NONE = Value
-  val BT_CALL = Value
-  val BT_RET  = Value
-  val BT_JAL  = Value
-  val BT_JALR = Value
-  val BT_BRN  = Value
-}
-
-// Different types of RISC-V branch instruction encodings. 
-object BranchInstKind extends ChiselEnum {
-  val PB_NONE = Value
-  val PB_JAL  = Value
-  val PB_JALR = Value
-  val PB_BRN  = Value
-}
-
 // Describing different load/store widths
 object LdStWidth extends ChiselEnum {
   val W_NOP = Value
@@ -275,33 +382,8 @@ object UopKind extends ChiselEnum {
   val U_ST  = Value
   val U_BRN = Value
   val U_JMP = Value
+  val U_CSR = Value
 }
-
-
-// Describes the kinds of source operands associated with an instruction. 
-// The encoding type (at least, for RV32I) mostly captures the kinds of source
-// operands for an instruction:
-//
-//  - R-type encodings depend on RS1 and RS2
-//  - I-type encodings depend on RS1 and an immediate value
-//    - JALR *also* depends on the program counter
-//  - S-type encodings depend on RS1, RS2, and an immediate value
-//  - B-type encodings depend on RS1, RS2, an immediate value, and the 
-//    program counter
-//  - U-type encodings depend on an immediate value 
-//    - AUIPC *also* depends on the program counter
-//  - J-type encodings depend on an immediate value and the program counter
-//
-//object SourceType extends ChiselEnum {
-//  val ST_NONE = Value("b0000".U) // Unused/dont-care
-//  val ST_RRxx = Value("b1100".U) // RS1, RS2, (), ()   (R-type)
-//  val ST_RxxI = Value("b1001".U) // RS1, (),  (), IMM  (I-type)
-//  val ST_RxPI = Value("b1011".U) // RS1, (),  PC, IMM  (JALR)
-//  val ST_RRxI = Value("b1101".U) // RS1, RS2, (), IMM  (S-type)
-//  val ST_RRPI = Value("b1111".U) // RS1, RS2, PC, IMM  (B-type)
-//  val ST_xxPI = Value("b0011".U) // (),  (),  PC, IMM  (J-type, AUIPC)
-//  val ST_xxxI = Value("b0001".U) // (),  (),  (), IMM  (LUI)
-//}
 
 // Indicates when an integer operation can be squashed into a mov/zero idiom.
 object MovCtl extends ChiselEnum {
@@ -316,20 +398,13 @@ object ImmStorageKind extends ChiselEnum {
   val NONE = Value // No immediate data
   val ZERO = Value // This immediate is zero
   val INL  = Value // Can be inlined into a physical register index
-  val ALC  = Value // Must be allocated a physical register
+  val ALC  = Value // Storage must be allocated for this immediate
 }
 
 // Bits determining how an immediate value is recovered in the backend.
 class ImmCtl(implicit p: ZnoParam) extends Bundle {
   val ifmt    = RvImmFmt()       // RISC-V immediate format
   val storage = ImmStorageKind() // How is this value stored?
-}
-
-class PdMop(implicit p: ZnoParam) extends Bundle {
-  val opcd    = UInt(p.xlen.W)
-  val btype   = BranchType()
-  val ifmt    = RvImmFmt()
-  val imm     = UInt(p.xlen.W)
 }
 
 class MacroOp(implicit p: ZnoParam) extends Bundle {
@@ -354,9 +429,8 @@ class MacroOp(implicit p: ZnoParam) extends Bundle {
   // We expect this might be recomputed during rename.
   val mov_ctl = MovCtl()
 
-  // Immediate control and [unexpanded] data
+  // Immediate control bits
   val imm_ctl = new ImmCtl
-  val imm_data = new RvImmData
 
   // "Does this macro op allocate a new physical destination register?"
   def is_allocation(): Bool = {

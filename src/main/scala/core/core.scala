@@ -16,23 +16,18 @@ import zno.common._
 
 class ZnoCore extends Module {
   implicit val p = ZnoParam()
-
-  val io = IO(new Bundle {
-    // Connection from the frontend to some external memory
-    val ibus  = new ZnoInstBusIO
-
-    val dbg_int_disp = new IntegerDispatchIO
-  })
+  val ibus  = IO(new ZnoInstBusIO)
+  //val dbg_int_disp = IO(new IntegerDispatchIO)
 
   // This seems like a reasonable way of slicing things up. 
   val fc = Module(new ZnoFrontcore)
-  val mc = Module(new ZnoMidcore)
+  //val mc = Module(new ZnoMidcore)
   //val bc = Module(new ZnoBackcore)
 
-  fc.io.ibus    <> io.ibus
-  fc.io.dblk    <> mc.io.dblk
+  fc.ibus    <> ibus
+  //fc.io.dblk    <> mc.io.dblk
 
-  mc.io.int_disp <> io.dbg_int_disp // FIXME
+  //mc.io.int_disp <> io.dbg_int_disp // FIXME
 
 }
 

@@ -13,20 +13,6 @@ object Sext {
   }
 }
 
-// Chained priority encoder selecting up to 'width' least-significant bits 
-// from the input. 
-object ChainedPriorityEncoderOH {
-  def apply(value: UInt, width: Int) = {
-    val res  = Wire(Vec(width, UInt(value.getWidth.W)))
-    var mask = value
-    for (i <- 0 until width) {
-      res(i) := ReduceTreePriorityEncoder(mask)
-      mask    = mask & ~res(i)
-    }
-    res
-  }
-}
-
 // Create a balanced tree of binary operations on some data. 
 //
 // NOTE: Chisel lets you do this on [Vec], but it seems like it'd be nice to 
@@ -84,5 +70,22 @@ object ReduceTreePriorityEncoder {
   def apply(in: Bits): UInt = apply(in.asBools)
 }
 
+// Chained priority encoder selecting up to 'width' least-significant bits 
+// from the input. 
+//
+// NOTE: Is this something that you can parallelize?
+//
+object ChainedPriorityEncoderOH {
+  def apply(value: UInt, width: Int) = {
+    val res  = Wire(Vec(width, UInt(value.getWidth.W)))
+    var mask = value
+    for (i <- 0 until width) {
+      val this_res = PriorityEncoderOH(mask)
+      mask    = mask & ~this_res
+      res(i) := this_res
+    }
+    res
+  }
+}
 
 

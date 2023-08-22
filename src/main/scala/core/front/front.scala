@@ -11,13 +11,12 @@ import zno.common._
 import zno.riscv.isa._
 import zno.core.uarch._
 
-import zno.core.front.decode._
 
 
 class FetchUnit(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle {
     val ibus = new ZnoInstBusIO
-    val ftgt = Flipped(Decoupled(new FetchBlockAddr))
+    val ftgt = Flipped(Decoupled(p.FetchBlockAddr()))
     val fblk = Decoupled(new FetchBlock)
   })
 
@@ -28,72 +27,69 @@ class FetchUnit(implicit p: ZnoParam) extends Module {
   io.fblk <> io.ibus.resp
 }
 
+
+// Predecode unit. 
+//
+// NOTE: The original fetch block *flows through* this logic. 
 class PredecodeUnit(implicit p: ZnoParam) extends Module {
   val io = IO(new Bundle {
     val fblk = Flipped(Decoupled(new FetchBlock))
     val pdblk = Decoupled(new PredecodeBlock)
   })
   val pdec = Seq.fill(p.dec_win.size)(Module(new Predecoder))
+
   for (idx <- 0 until p.dec_win.size) {
     pdec(idx).io.opcd := io.fblk.bits.data(idx)
-    io.pdblk.bits.data(idx) := pdec(idx).io.out
+    io.pdblk.bits.pdmops(idx) := pdec(idx).io.out
   }
-  io.pdblk.bits.addr := io.fblk.bits.addr
-  io.pdblk.valid := io.fblk.valid
-  io.fblk.ready := io.pdblk.ready
-
+  io.pdblk.bits.fblk := io.fblk.bits
+  io.pdblk.valid     := io.fblk.valid
+  io.fblk.ready      := io.pdblk.ready
 }
 
-class DecodeUnit(implicit p: ZnoParam) extends Module {
-  val io = IO(new Bundle {
-    val fblk = Flipped(Decoupled(new FetchBlock))
-    val dblk = Decoupled(new DecodeBlock)
-  })
-  val dec = Seq.fill(p.dec_win.size)(Module(new UopDecoder))
-
-  for (idx <- 0 until p.dec_win.size) {
-    dec(idx).inst          := io.fblk.bits.data(idx)
-    io.dblk.bits.data(idx) := dec(idx).out
-  }
-  io.dblk.bits.addr := io.fblk.bits.addr
-  io.dblk.valid     := io.fblk.valid
-  io.fblk.ready     := io.dblk.ready
-}
 
 // The front-end of the machine.
 class ZnoFrontcore(implicit p: ZnoParam) extends Module {
-  val io = IO(new Bundle {
+  val io = IO(new Bundle { 
     // Connection to instruction memory
     val ibus = new ZnoInstBusIO
-    // Connection to a queue of decoded blocks
-    val dblk = Decoupled(new DecodeBlock)
-
     // Architectural control-flow event
-    val arch_cfe = Flipped(Decoupled(new ArchitecturalCfEvent))
+    val arch_cfe = Flipped(Decoupled(new ControlFlowEvent))
+    // To midcore/instruction decode
+    val cfmblk = Decoupled(new CfmBlock)
   })
 
-  val bpu = Module(new BranchPredictionUnit)
   val cfm = Module(new ControlFlowMap)
-  val ftq = Module(new Queue(new FetchBlockAddr, p.ftq.size))
+
   val ifu = Module(new FetchUnit)
   val fbq = Module(new Queue(new FetchBlock, p.fbq.size))
   val pdu = Module(new PredecodeUnit)
-  val idu = Module(new DecodeUnit)
 
-  cfm.io.arch_cfe <> io.arch_cfe
-  cfm.io.spec_cfe <> bpu.io.spec_cfe
-  cfm.io.ftgt <> ftq.io.enq
-  cfm.io.pdblk <> pdu.io.pdblk
+  val ftq = Module(new Queue(p.FetchBlockAddr(), p.ftq.size))
+  ftq.io.enq.valid := false.B
+  ftq.io.enq.bits  := 0.U.asTypeOf(p.FetchBlockAddr())
 
+  // Instruction fetch is connected to instruction memory
   ifu.io.ibus <> io.ibus
-  ifu.io.ftgt <> ftq.io.deq
-  ifu.io.fblk <> fbq.io.enq
 
-  pdu.io.fblk <> fbq.io.deq
+  // Architectural events flow into the CFM
+  io.arch_cfe <> cfm.io.arch_cfe
 
-  idu.io.fblk <> fbq.io.deq
-  idu.io.dblk <> io.dblk
+  // CFM sends fetch targets to the FTQ
+  ftq.io.enq <> cfm.io.ftq
 
+  // The CFM maintains a queue for fetch targets
+  cfm.io.ftq  <> ifu.io.ftgt    // FTQ => IFU
+
+  // A queue of fetched blocks separates fetch from predecode
+  ifu.io.fblk <> fbq.io.enq     // IFU => FBQ
+  fbq.io.deq  <> pdu.io.fblk    // FBQ => PDU
+
+  // Predecoded blocks flow into the CFM
+  pdu.io.pdblk <> cfm.io.pdblk  // PDU => CFM
+
+  // The CFM sends fetched blocks down the pipeline to the midcore
+  cfm.io.cfmblk <> io.cfmblk
 
 }
 

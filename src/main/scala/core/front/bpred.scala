@@ -80,18 +80,45 @@ class GsharePredictor(
 {
   val io = IO(new Bundle {
     val in_ghist = Input(new HistoryVector(ghist_depth))
-    val in_pc    = Input(new ProgramCounter)
+    val in_pc    = Input(p.ProgramCounter())
   })
 
   val tagwidth: Int = log2Ceil(num_entries)
   val r_bias  = RegInit(Vec(num_entries, BiasVector()))
+
+  // TODO ...
+}
+
+class RASReadPort(implicit p: ZnoParam) extends Bundle {
+  val idx  = Input(p.ras.idx())
+  val data = Output(UInt(p.xlen.W))
+}
+
+class RASWritePort(implicit p: ZnoParam) extends Bundle { 
+  val idx  = Input(p.ras.idx())
+  val data = Input(UInt(p.xlen.W))
+}
+
+class ReturnAddressStack(implicit p: ZnoParam) extends Module {
+  val io = IO(new Bundle {
+    val wp = Valid(Input(new RASWritePort))
+    val rp = new RASReadPort
+  })
+
+  io.rp.data := DontCare // FIXME
+}
+
+
+class BranchOutcome(implicit p: ZnoParam) extends Bundle {
+  val taken = Input(Bool())
+  val pc    = Input(p.ProgramCounter())
 }
 
 
 // Top-level branch prediction unit. 
 class BranchPredictionUnit(
   // Depth of the global history register
-  val ghist_depth: Int = 12,
+  val ghist_depth: Int = 32,
 )(implicit p: ZnoParam) extends Module 
 {
   val io = IO(new Bundle {
@@ -104,6 +131,8 @@ class BranchPredictionUnit(
 
   val ghr = RegInit(HistoryVector(ghist_depth))
 }
+
+
 
 
 

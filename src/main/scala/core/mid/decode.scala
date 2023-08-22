@@ -1,5 +1,5 @@
 
-package zno.core.front.decode
+package zno.core.mid
 
 import chisel3._
 import chisel3.util._
@@ -11,8 +11,6 @@ import zno.common._
 import zno.common.bitpat._
 import zno.riscv.isa._
 import zno.core.uarch._
-import zno.core.front._
-import zno.core.front.imm._
 
 // Output from a single decoder
 class DecoderOutput extends Bundle with AsBitPat {
@@ -145,12 +143,13 @@ class UopDecoder(implicit p: ZnoParam) extends Module {
   val rs1 = inst(19, 15)
   val rs2 = inst(24, 20)
 
-  val immext = Module(new ImmediateExtractor)
-  immext.io.inst := inst
-  immext.io.ifmt := tbl.ifmt
+  // NOTE: You're handling this elsewhere
+  //val immext = Module(new ImmediateExtractor)
+  //immext.io.inst := inst
+  //immext.io.ifmt := tbl.ifmt
+  //out.imm_data := immext.io.imm_data
+  //out.imm_ctl  := immext.io.imm_ctl
 
-  out.imm_data := immext.io.imm_data
-  out.imm_ctl  := immext.io.imm_ctl
   out.kind     := tbl.kind
   out.brn_op   := tbl.brn_op
   out.mem_w    := tbl.mem_w
