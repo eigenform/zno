@@ -1,0 +1,336 @@
+<!DOCTYPE HTML>
+<html lang="en" class="sidebar-visible no-js light">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Register Renaming - ZNO Microarchitecture</title>
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff" />
+
+        <link rel="icon" href="../favicon.svg">
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href=".././mdbook-admonish.css">
+
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('no-js')
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add('js');
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var html = document.querySelector('html');
+            var sidebar = null;
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="../intro.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Implementation</li><li class="chapter-item expanded "><a href="../front/frontend.html"><strong aria-hidden="true">1.</strong> ZNO Frontend</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../front/cfe.html"><strong aria-hidden="true">1.1.</strong> Control-flow</a></li><li class="chapter-item expanded "><a href="../front/nfpred.html"><strong aria-hidden="true">1.2.</strong> Next-Fetch Prediction</a></li><li class="chapter-item expanded "><a href="../front/fetch.html"><strong aria-hidden="true">1.3.</strong> Instruction Fetch</a></li><li class="chapter-item expanded "><a href="../front/predecode.html"><strong aria-hidden="true">1.4.</strong> Instruction Predecode</a></li><li class="chapter-item expanded "><a href="../front/decode.html"><strong aria-hidden="true">1.5.</strong> Instruction Decode</a></li><li class="chapter-item expanded "><a href="../front/bpred.html"><strong aria-hidden="true">1.6.</strong> Branch Prediction</a></li></ol></li><li class="chapter-item expanded "><a href="../mid/midcore.html"><strong aria-hidden="true">2.</strong> ZNO Midcore</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../mid/rename.html" class="active"><strong aria-hidden="true">2.1.</strong> Register Renaming</a></li><li class="chapter-item expanded "><a href="../mid/dispatch.html"><strong aria-hidden="true">2.2.</strong> Instruction Dispatch</a></li></ol></li><li class="chapter-item expanded "><a href="../back/backend.html"><strong aria-hidden="true">3.</strong> ZNO Backend</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../back/sched.html"><strong aria-hidden="true">3.1.</strong> Instruction Scheduling</a></li><li class="chapter-item expanded "><a href="../back/integer.html"><strong aria-hidden="true">3.2.</strong> Integer Pipeline</a></li><li class="chapter-item expanded "><a href="../back/ldst.html"><strong aria-hidden="true">3.3.</strong> Load/Store Pipeline</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky bordered">
+                    <div class="left-buttons">
+                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </button>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">ZNO Microarchitecture</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="register-renaming"><a class="header" href="#register-renaming">Register Renaming</a></h1>
+<div id="admonition-abstract-nonsense" class="admonition info">
+<div class="admonition-title">
+<p>Abstract Nonsense</p>
+<p><a class="admonition-anchor-link" href="#admonition-abstract-nonsense"></a></p>
+</div>
+<div>
+<p>Without aliasing between architectural storage locations, a set of 
+instructions can be easily rearranged into a <strong>dataflow graph</strong>: think of 
+instructions as nodes in the graph, and their <strong>read-after-write</strong> (RAW) 
+dependences as edges. This makes it obvious which instructions can be 
+completed in parallel with one another, and which instructions must wait
+for others before being executed. Out-of-order instruction issue depends on
+this property. </p>
+<p>If you're familiar with the way that modern compilers are implemented, you 
+might know that programs are often represented in <strong>single-static assignment</strong> 
+(SSA) form. The rationale behind register renaming is very similar, although
+we don't exactly have an <em>infinite</em> amount of registers.</p>
+</div>
+</div>
+<p>The register map and freelist are both used to rename architectural operands 
+into physical operands. Renaming is mainly used to prepare instructions for 
+out-of-order scheduling and execution in the backend. </p>
+<p>In general, renaming involves the following steps:</p>
+<ol>
+<li>Determine which operands resolve to known values (ie. zero)</li>
+<li>Determine which instructions are non-scheduled</li>
+<li>Determine which instructions allocate a new physical register</li>
+<li>Resolve &quot;local&quot; physical dependences (solely between instructions within 
+the window) by forwarding newly-allocated registers</li>
+<li>Resolve &quot;global&quot; physical dependences (between instructions in the window
+and older instructions in the pipeline) by reading from the register map</li>
+<li>Write back to the freelist and the register map</li>
+</ol>
+<p>Some macro-ops can be completed early during this stage by simply writing to 
+the register map. These <strong>non-scheduled instructions</strong> need to be detected 
+before we can determine what should happen with the rest of the instructions in 
+the window. </p>
+<h2 id="detecting-non-scheduled-instructions"><a class="header" href="#detecting-non-scheduled-instructions">Detecting Non-Scheduled Instructions</a></h2>
+<p>Integer operations in the decode window may complete during rename if their 
+operands satisfy some conditions. For now, these cases are:</p>
+<ul>
+<li>Register-to-register moves</li>
+<li>Immediate-to-register moves</li>
+<li>Zero-to-register moves</li>
+<li>No-ops </li>
+</ul>
+<p>Most of these occur for integer operations where zero is the identity, and
+our ability to recognize these depends on recognizing which operands can be
+resolved as zero. There are two places where this occurs:</p>
+<ul>
+<li>During decode, some operands are explicitly set to zero (like for <code>LUI</code>)</li>
+<li>During decode, comparators determine whether or not an immediate is zero</li>
+<li>By checking the register map zero bits during rename, we can determine if an 
+architectural register is currently mapped to zero</li>
+</ul>
+<div id="admonition-abstract-nonsense-1" class="admonition info">
+<div class="admonition-title">
+<p>Abstract Nonsense</p>
+<p><a class="admonition-anchor-link" href="#admonition-abstract-nonsense-1"></a></p>
+</div>
+<div>
+<p>This is kind of like a very-limited form of <strong>constant propagation</strong>, but 
+only for values that are known to be zero. As far as I can tell, the cost of 
+this is &quot;putting comparators on the register map write ports.&quot;</p>
+</div>
+</div>
+<p>Given this information, the following integer operations can be squashed into 
+a move operation:</p>
+<ul>
+<li>For integer operations where zero is the identity, and when either operand 
+is zero, move the non-zero operand</li>
+<li>For subtraction, when the second operand is zero, move the first operand</li>
+<li>For subtraction and logical XOR, when both operands are the same, move zero </li>
+<li>For logical AND, when either operand is zero, move zero</li>
+</ul>
+<p>On top of this, integer operations where <em>both</em> operands are zero must be 
+equivalent to a no-op. </p>
+<h2 id="register-allocation"><a class="header" href="#register-allocation">Register Allocation</a></h2>
+<p>After scanning for non-scheduled instructions, we can determine whether or
+not each instruction in the decode window should allocate a physical register. 
+Non-scheduled instructions do not allocate.</p>
+<h2 id="resolving-dependences"><a class="header" href="#resolving-dependences">Resolving Dependences</a></h2>
+<p>In general, the register map read ports are used to convert a source register
+into the appropriate physical register. These are cases for &quot;global&quot; 
+dependences: registers that have been bound to a physical register on
+a previous cycle. </p>
+<p>However, for those instructions whose source registers are the destination 
+for some previous instruction in the window, the register map cannot be used 
+to resolve a physical register, since the bindings have not occured yet. </p>
+<p>Instead, the appropriate register name must be forwarded from the most-recent 
+producer in the decode window:</p>
+<ul>
+<li>When the producer is a scheduled instruction (with allocates), the 
+newly-allocated physical destination is used to resolve the name</li>
+<li><strong>TODO</strong></li>
+</ul>
+<div id="admonition-note" class="admonition note">
+<div class="admonition-title">
+<p>Note</p>
+<p><a class="admonition-anchor-link" href="#admonition-note"></a></p>
+</div>
+<div>
+<p>Since non-scheduled instructions do not have a physical destination, what
+are we supposed to do when some source relies on a previous non-scheduled
+instruction? </p>
+<ul>
+<li>We could add read ports for each architectural destination?</li>
+<li>We could add ports that copy from one binding to another?</li>
+</ul>
+</div>
+</div>
+<h2 id="preparing-state"><a class="header" href="#preparing-state">Preparing State</a></h2>
+<p>This whole process results in writes to the register map and freelist. 
+There are two possible interactions with the register map write ports: </p>
+<ol>
+<li>For scheduled instructions that must allocate, we bind <code>rd</code> to the 
+newly-allocated physical destination register</li>
+<li>For non-scheduled instructions, we bind <code>rd</code> to the appropriate 
+physical source register </li>
+</ol>
+<h2 id="freelist"><a class="header" href="#freelist">Freelist</a></h2>
+<p>A <strong>freelist</strong> stores the set of physical registers that are available for
+allocation. 
+There is one read port for each entry in the decode window.
+The index of a free physical register is always being driven over the read
+port (if a register is available), along with a <code>valid</code> bit.
+When the <code>alloc</code> bit on a read port is held high, the corresponding physical
+register is marked as in-use starting on the next clock cycle. </p>
+<h2 id="register-map"><a class="header" href="#register-map">Register Map</a></h2>
+<p>A <strong>register map</strong> associates a physical register to each architectural 
+register (excluding the zero register <code>x0</code>). There are two read ports and 
+one write port for each entry in the decode window. </p>
+<p>The register map also tracks which architectural registers are bound to the 
+physical register 0. Each write port has a comparator used to determine 
+how the zero bit should be updated along with the binding. 
+These status bits are always driven as output.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../mid/midcore.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next" href="../mid/dispatch.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../mid/midcore.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next" href="../mid/dispatch.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+    </div>
+    </body>
+</html>

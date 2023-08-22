@@ -1,0 +1,13 @@
+project/
+target/
+test_run_dir/
+synth/
+models/
+docs/
+
+*.bin
+*.elf
+*.hex
+*.mem
+*.drawio
+*.f

@@ -1,0 +1,806 @@
+<!DOCTYPE HTML>
+<html lang="en" class="sidebar-visible no-js light">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>ZNO Microarchitecture</title>
+        <meta name="robots" content="noindex" />
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff" />
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="./mdbook-admonish.css">
+
+    </head>
+    <body>
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('no-js')
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add('js');
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var html = document.querySelector('html');
+            var sidebar = null;
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded affix "><a href="intro.html">Introduction</a></li><li class="chapter-item expanded affix "><li class="part-title">Implementation</li><li class="chapter-item expanded "><a href="front/frontend.html"><strong aria-hidden="true">1.</strong> ZNO Frontend</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="front/cfe.html"><strong aria-hidden="true">1.1.</strong> Control-flow</a></li><li class="chapter-item expanded "><a href="front/nfpred.html"><strong aria-hidden="true">1.2.</strong> Next-Fetch Prediction</a></li><li class="chapter-item expanded "><a href="front/fetch.html"><strong aria-hidden="true">1.3.</strong> Instruction Fetch</a></li><li class="chapter-item expanded "><a href="front/predecode.html"><strong aria-hidden="true">1.4.</strong> Instruction Predecode</a></li><li class="chapter-item expanded "><a href="front/decode.html"><strong aria-hidden="true">1.5.</strong> Instruction Decode</a></li><li class="chapter-item expanded "><a href="front/bpred.html"><strong aria-hidden="true">1.6.</strong> Branch Prediction</a></li></ol></li><li class="chapter-item expanded "><a href="mid/midcore.html"><strong aria-hidden="true">2.</strong> ZNO Midcore</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="mid/rename.html"><strong aria-hidden="true">2.1.</strong> Register Renaming</a></li><li class="chapter-item expanded "><a href="mid/dispatch.html"><strong aria-hidden="true">2.2.</strong> Instruction Dispatch</a></li></ol></li><li class="chapter-item expanded "><a href="back/backend.html"><strong aria-hidden="true">3.</strong> ZNO Backend</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="back/sched.html"><strong aria-hidden="true">3.1.</strong> Instruction Scheduling</a></li><li class="chapter-item expanded "><a href="back/integer.html"><strong aria-hidden="true">3.2.</strong> Integer Pipeline</a></li><li class="chapter-item expanded "><a href="back/ldst.html"><strong aria-hidden="true">3.3.</strong> Load/Store Pipeline</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky bordered">
+                    <div class="left-buttons">
+                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </button>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">ZNO Microarchitecture</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="introduction"><a class="header" href="#introduction">Introduction</a></h1>
+<div id="admonition-note" class="admonition note">
+<div class="admonition-title">
+<p>Note</p>
+<p><a class="admonition-anchor-link" href="intro.html#admonition-note"></a></p>
+</div>
+<div>
+<p>As of mid-2023, this design is still mostly <em>conceptual</em> and largely 
+consists of fragments of partially-completed ideas in RTL. There are no 
+synthesizable artifacts, and this will probably be the case for some time.</p>
+</div>
+</div>
+<p>This project is a vehicle for exploring the following questions:</p>
+<ul>
+<li>How are modern [superscalar, out-of-order] microprocessors implemented?</li>
+<li>How do you create a behavioral description of these machines in RTL?</li>
+<li>What does it take to <em>physically</em> implement these machines? </li>
+</ul>
+<p>Currently, <code>ZNO</code> is a RISC-V machine designed around the RV32I base integer 
+instruction set. This seemed like sufficient ground for exploring many
+of the problems involved in the design of modern machines. 
+Other aspects of the RISC-V ISA can probably be added after the 
+overall design has stabilized somewhat. </p>
+<h2 id="rough-overview"><a class="header" href="#rough-overview">Rough Overview</a></h2>
+<p>The <code>ZNO</code> core is split into three pieces:</p>
+<ul>
+<li>The <a href="./front/frontend.html">frontend</a> (for dealing with control-flow)</li>
+<li>The <a href="./mid/midcore.html">midcore</a> (for managing state)</li>
+<li>The <a href="./back/backend.html">backend</a> (for dealing with data-flow)</li>
+</ul>
+<p><img src="./img/zno_core-overview.png" alt="Diagram" /></p>
+<h2 id="about-chisel"><a class="header" href="#about-chisel">About Chisel</a></h2>
+<p><code>ZNO</code> is written in <a href="https://github.com/chipsalliance/chisel">Chisel</a>, 
+an HDL embedded in Scala. Chisel internally represents designs with 
+<a href="https://github.com/chipsalliance/firrtl-spec">FIRRTL</a>, which may be lowered
+into other representations (like Verilog) via <a href="https://github.com/llvm/circt">CIRCT</a>.</p>
+<h2 id="testingsimulating-the-design"><a class="header" href="#testingsimulating-the-design">Testing/Simulating the Design</a></h2>
+<p>Chisel also includes a framework for writing tests (<code>chiseltest</code>).
+In the future, it will probably be necessary to explore other ways of
+simulating and testing designs. </p>
+<div id="admonition-note-1" class="admonition note">
+<div class="admonition-title">
+<p>Note</p>
+<p><a class="admonition-anchor-link" href="intro.html#admonition-note-1"></a></p>
+</div>
+<div>
+<p>Specifically, CIRCT's <code>arc</code> dialect provides a representation for simulating
+circuits which can be lowered into LLVM IR! </p>
+<p>CIRCT provides an experimental tool (<code>arcilator</code>) for this, although FIRRTL 
+needs to be lowered into the <code>hw</code> dialect for this to work.
+At the moment, <code>arcilator</code> can be used to generate simple C++ bindings 
+(see <code>tools/</code>arcilator` in the CIRCT tree for details on this).</p>
+<p>It's easy to imagine that in the future, the FIRRTL dialect will be able to
+represent user-defined types (Chisel bundles). Presumably at some point,
+this information can be lowered into <code>hw</code> and used by <code>arc</code> (or other 
+tooling) for creating a nice ergonomic interface to the simulated state.</p>
+</div>
+</div>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="zno-frontend"><a class="header" href="#zno-frontend">ZNO Frontend</a></h1>
+<p>The front-end of a modern microprocessor is mostly concerned with keeping
+a constant stream of instructions moving into the machine. </p>
+<p><a href="front/./bpred.html">Branch Prediction</a> attempts to predict the direction/target of 
+individual control-flow instructions by caching branch target addresses and
+tracking the history of previous branch outcomes.</p>
+<p><a href="front/./fpred.html">Next-Fetch Prediction</a> attempts to predictively guide instruction 
+fetch by caching branch predictions and associating them with the names of 
+previously-fetched blocks.</p>
+<p><a href="front/./fetch.html">Instruction Fetch</a> retrieves instructions from memory. </p>
+<p><a href="front/./predecode.html">Instruction Predecode</a> extracts immediate data/control bits
+from instructions, and attempts to discover control-flow instructions early
+in the pipeline. </p>
+<p><a href="front/./decode.html">Instruction Decode</a> transforms instructions into macro-ops.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="control-flow"><a class="header" href="#control-flow">Control-flow</a></h1>
+<p>A <strong>control-flow event</strong> occurs when frontend must move to a new point in 
+the instruction stream. A unique point in the instruction stream is always
+represented by a <strong>program counter</strong> value. </p>
+<p>A control-flow event indicates the start of the instruction pipeline, and 
+results in the instruction fetch unit bringing the the appropriate fetch block 
+into the machine.</p>
+<h2 id="speculative-events"><a class="header" href="#speculative-events">Speculative Events</a></h2>
+<p>Ideally, control-flow events occur <em>every cycle</em> in order to keep the pipeline 
+filled with instructions. However, in pipelined machines, there is an inherent 
+latency associated with architectural changes in control-flow: instructions
+take multiple cycles to move through the pipeline. </p>
+<p>In order to compensate for this, changes in control-flow may be <em>predicted</em> 
+and may occur <em>speculatively</em>.</p>
+<p>Control-flow events are called <em>speculative</em> when the next set of 
+instructions are part of a <em>predicted</em> path through the instruction 
+stream. </p>
+<p>Speculative events are generated from a <strong>branch prediction pipeline</strong>
+which is partially decoupled from the instruction pipeline.</p>
+<h2 id="architectural-events"><a class="header" href="#architectural-events">Architectural Events</a></h2>
+<p>Control-flow events are called <em>architectural</em> when the next set 
+of instructions are <em>guaranteed</em> to belong to the path through the instruction 
+stream. For instance:</p>
+<ul>
+<li>When execution begins at the reset vector, the architectural path continues
+at the reset vector</li>
+<li>When a faulting instruction retires and causes a precise exception,
+the architectural path continues at the location of an exception handler</li>
+<li>When a branch or jump instruction retires, the architectural path continues
+at the appropriate branch target address</li>
+<li>When an entire block of instructions retires without causing any of the 
+events listed above, the architectural path <em>must</em> continue at the 
+next-sequential block of instructions</li>
+</ul>
+<p>Architectural events are generated from the retire control unit. </p>
+<h2 id="fetch-blocks"><a class="header" href="#fetch-blocks">Fetch Blocks</a></h2>
+<div id="admonition-note" class="admonition note">
+<div class="admonition-title">
+<p>Note</p>
+<p><a class="admonition-anchor-link" href="front/cfe.html#admonition-note"></a></p>
+</div>
+<div>
+<p>It's useful to think of the instruction stream as a <strong>control-flow graph</strong> 
+where the edges are <strong>control-flow operations</strong> (jump and branch instructions),
+and the nodes are <strong>basic blocks</strong> which: </p>
+<ul>
+<li>Begin with an instruction which is the target of a control-flow operation</li>
+<li>End with a single control-flow operation (whose target is <em>necessarily</em>
+the start of a basic block)</li>
+</ul>
+<p>Note that these are distinct from <strong>fetch blocks</strong>. A basic block might 
+consist of multiple <em>sequential</em> fetch blocks. Or conversely, a single fetch 
+block might have multiple basic blocks.</p>
+<p>There's a sense in which we ideally want to maintain a cached version of 
+something like a control-flow graph:</p>
+<ol>
+<li>When entering a basic block, how many sequential fetch blocks until we 
+reach the end of the basic block? These can be immediately queued up for 
+fetch.</li>
+<li>When we reach the last fetch block within a basic block, which instruction
+is terminal, and what is the address of the next basic block?</li>
+</ol>
+</div>
+</div>
+<p>The instruction stream is quantized in terms of <strong>fetch blocks</strong> which 
+correspond to the smallest addressible elements in instruction memory 
+(typically, a line in some first-level instruction cache).</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="next-fetch-prediction"><a class="header" href="#next-fetch-prediction">Next-Fetch Prediction</a></h1>
+<p>Ideally, instruction fetch is constantly producing an uninterrupted stream of 
+fetch blocks which contain the correct, architecturally-relevant path. 
+In order to approach this goal, each address sent to instruction fetch must 
+also be subject to a <strong>next-fetch prediction</strong>. </p>
+<p>Ideally, this occurs <em>immediately</em> when the machine obtains the next 
+program counter value - otherwise, pipeline bubbles will occur as the machine
+becomes starved for instructions.</p>
+<h2 id="control-flow-map-cfm"><a class="header" href="#control-flow-map-cfm">&quot;Control-flow Map&quot; (CFM)</a></h2>
+<div id="admonition-note" class="admonition note">
+<div class="admonition-title">
+<p>Note</p>
+<p><a class="admonition-anchor-link" href="front/nfpred.html#admonition-note"></a></p>
+</div>
+<div>
+<ul>
+<li>This is a somewhat aggressive solution?? There's probably a more relaxed 
+version of this where we only handle certain &quot;easy&quot; cases. </li>
+<li>This can probably be used to store certain predictions alongside branch
+information</li>
+<li>To what degree do we want <em>speculative</em> control-flow events to be subject to 
+next-fetch prediction?</li>
+<li>You can probably use this to create some kind of basic-block map by
+counting fetch blocks which contain no branches?</li>
+</ul>
+</div>
+</div>
+<p>A <strong>control-flow map</strong> (CFM) is indexed by fetch block address and stores 
+previously-discovered control-flow information about the contents of a fetch 
+block. When a fetch block contains branches, a corresponding CFM entry may 
+be filled by the output of instruction predecode. </p>
+<p>The CFM is used to predict <em>the existence of an instruction</em> within a fetch 
+block that will result in a control-flow event <strong>and</strong> predict the associated
+target address. In this way, a CFM entry can be used to obtain the address 
+of the next-expected fetch block while the previous is being fetched. </p>
+<ol>
+<li>
+<p>All control-flow events have an associated target (program counter value).
+The corresponding fetch block address is used to access the CFM while
+simultaneously being sent to the instruction fetch unit.</p>
+</li>
+<li>
+<p>When a CFM miss occurs, an informed prediction cannot be made in-parallel 
+with instruction fetch. </p>
+</li>
+<li>
+<p>When a CFM hit occurs, the contents of the entry are used to make a new 
+prediction in parallel with instruction fetch. This may involve accessing 
+storage for other branch prediction structures. </p>
+</li>
+<li>
+<p>After instruction fetch and predecode have completed, the contents of a
+CFM hit are validated against the newly-predecoded fetch block. 
+If predecode output does not match the branches cached by the CFM entry, the 
+entry must be updated to reflect the fact that the contents of the fetch block
+have apparently changed. This must also invalidate any prediction made with
+the now-invalid cached branch information.</p>
+</li>
+</ol>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="instruction-fetch"><a class="header" href="#instruction-fetch">Instruction Fetch</a></h1>
+<div id="admonition-note" class="admonition note">
+<div class="admonition-title">
+<p>Note</p>
+<p><a class="admonition-anchor-link" href="front/fetch.html#admonition-note"></a></p>
+</div>
+<div>
+<p>For now, we're assuming that all addressing is <em>physical</em> - totally ignoring
+the existence of a <strong>memory-management unit</strong> (MMU) that handles virtual
+addressing.</p>
+<p>In modern machines, instruction fetch typically targets a first-level 
+instruction cache, and fetch blocks correspond to first-level cache lines
+(or half cache lines). Moreover, modern machines often include <strong>prefetch</strong> 
+logic for opportunistically moving data upwards in the cache hierarchy. </p>
+<p>For machines with an virtual addressing, instruction fetch would also need
+to resolve a virtual address by interacting with an MMU. Virtual memory is
+typically mapped with multiple levels of page-tables (and varying page
+sizes). An MMU typically includes <strong>translation lookaside buffers</strong> (TLBs) 
+that cache previous virtual-to-physical translations. On top of that, 
+TLB maintainence is typically supported by dedicated hardware (ie. a 
+<strong>hardware page-table walker</strong> and dedicated caches for paths through the 
+page-tables). </p>
+<p>First-level caches are typically <strong>virtually-indexed and physically-tagged</strong>
+in order to allow address translation and cache indexing to occur in parallel.</p>
+</div>
+</div>
+<p>A <strong>fetch block address</strong> is sent to the instruction fetch unit, which
+performs a transaction with some instruction memory device. 
+The instruction stream is quantized in <strong>fetch blocks</strong>, which are the 
+smallest addressable elements in an instruction memory. </p>
+<p>The size of a fetch block constrains the superscalar width of the machine. 
+For now, we assume that a fetch block corresponds directly with the width
+of the pipeline (ie. for an 8-wide RV32I machine, a 32-byte fetch block). </p>
+<div id="admonition-note-1" class="admonition note">
+<div class="admonition-title">
+<p>Note</p>
+<p><a class="admonition-anchor-link" href="front/fetch.html#admonition-note-1"></a></p>
+</div>
+<div>
+<p>Having the fetch block width coincide with the superscalar width is only 
+reasonable if we can keep instruction fetch in a state where it is 
+<em>continuously</em> streaming in blocks that lie along the correct 
+architectural path?</p>
+</div>
+</div>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="instruction-predecode"><a class="header" href="#instruction-predecode">Instruction Predecode</a></h1>
+<div id="admonition-note" class="admonition note">
+<div class="admonition-title">
+<p>Note</p>
+<p><a class="admonition-anchor-link" href="front/predecode.html#admonition-note"></a></p>
+</div>
+<div>
+<p>Some other questions that we probably want to answer with information gathered
+during predecode:</p>
+<ul>
+<li>If there are no branches, this fetch block is expected to always fall 
+through to the next-sequential fetch block (ignoring the possibility of 
+an exception)</li>
+<li>Does a branch target lie inside/outside this fetch block? </li>
+<li>Despite the existence of branch instructions, is it still possible for this
+fetch block to fall through to the next-sequential fetch block?</li>
+</ul>
+</div>
+</div>
+<p>After completing a transaction, the fetch unit passes a fetch block to the
+predecoders. There is one predecode unit for each instruction in the block.
+Each predecode unit determines the following:</p>
+<ul>
+<li>The immediate encoding format</li>
+<li>The fully-expanded 32-bit immediate offset used to calculate a branch target</li>
+<li>Whether or not an instruction is a control-flow operation, ie.
+<ul>
+<li>An unconditional jump (<code>JAL</code>)</li>
+<li>An unconditional direct jump (<code>JALR</code>)</li>
+<li>A conditional branch (<code>B{EQ,GE,GEU,LT,LTU,NE}</code>)</li>
+<li>A call (<code>JAL</code> where <code>rd == x1</code>)</li>
+<li>A return (<code>JALR</code> where <code>rs1 == x1</code>)</li>
+</ul>
+</li>
+</ul>
+<p>This allows for control-flow instructions to be discovered shortly after fetch.
+Predecode output flows into the branch prediction pipeline, where it is used
+to [in]validate a previous prediction made for the corresponding fetch block.</p>
+<div id="admonition-about-immediates" class="admonition note">
+<div class="admonition-title">
+<p>About Immediates</p>
+<p><a class="admonition-anchor-link" href="front/predecode.html#admonition-about-immediates"></a></p>
+</div>
+<div>
+<p>It'd be nice to extract <em>all</em> immediates up-front here. 
+This makes a nice separation between &quot;predecode handling immediate operands&quot;
+and &quot;decode handling register operands.&quot; 
+However, this amounts to <em>a lot</em> of wires (a full 32-bit immediate for each 
+instruction in a fetch block), even before we completely decode the instruction. 
+On top of that, these need to be stored somewhere.</p>
+</div>
+</div>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="instruction-decode"><a class="header" href="#instruction-decode">Instruction Decode</a></h1>
+<div id="admonition-note" class="admonition note">
+<div class="admonition-title">
+<p>Note</p>
+<p><a class="admonition-anchor-link" href="front/decode.html#admonition-note"></a></p>
+</div>
+<div>
+<p>Since all encodings in RV32I are 32-bit, the process of decoding instructions 
+is dead-simple. However, compared to other kinds of machines, the code density 
+is not ideal: programs occupy more space as a result of this.</p>
+<p>In RISC-V, the extension for 16-bit compressed instructions is really the only 
+way to mitigate this. This also ideally means implementing some kind of 
+<strong>macro-op fusion</strong>, where we combine some instructions into a single 
+operation.</p>
+</div>
+</div>
+<p>In this context, all RISC-V instructions (for RV32I) have a 32-bit encoding. 
+Each decoder expands an instruction into a set of signals called a 
+<strong>macro-op</strong> (or &quot;mop&quot;). </p>
+<p>For now, we assume that there is one decoder for each instruction in a fetch 
+block. The resulting block of macro-ops is called a <strong>decode window</strong>
+(or just &quot;a decoded block&quot;).</p>
+<h2 id="about-risc-v-instructions"><a class="header" href="#about-risc-v-instructions">About RISC-V Instructions</a></h2>
+<p>For RV32I, there are very few fundamental kinds of instructions: </p>
+<ul>
+<li>There are simple integer arithmetic/logical operations </li>
+<li>There are conditional branches</li>
+<li>There are direct and indirect unconditional jumps</li>
+<li>There are memory operations (loads and stores)</li>
+</ul>
+<p>Notice that <em>all</em> of these ultimately involve an integer operation:</p>
+<ul>
+<li>Load/store addresses must be calculated with addition</li>
+<li>Jump/branch target addresses must be calculated with addition</li>
+<li>Conditional branches must be evaluated by comparing two values</li>
+</ul>
+<p>With that in mind, the only real difference between these instructions 
+is <em>how the result of the integer operation is used.</em> For instance:</p>
+<ul>
+<li>For simple integer operations, the result is written to the register file</li>
+<li>For conditional branches, there are two integer operations: 
+<ul>
+<li>One result (comparing <code>rs1</code> and <code>rs2</code>) determines the branch outcome</li>
+<li>The other result (<code>pc + imm</code>) determines the target address</li>
+</ul>
+</li>
+<li>For jumps, the result (<code>pc + imm</code>) determines the target address</li>
+<li>For memory operations, the result (<code>rs1 + imm</code>) determines the target address</li>
+</ul>
+<p>This means that RV32I instructions have a natural decomposition in terms of:</p>
+<ul>
+<li>An integer operation</li>
+<li>The set of operands</li>
+<li>Some kind of side-effect involving the integer result</li>
+</ul>
+<h2 id="about-macro-ops"><a class="header" href="#about-macro-ops">About Macro-ops</a></h2>
+<p>A macro-op corresponds to a single instruction which has been decompressed 
+into a set of control signals. In general, a macro-op should capture the 
+following pieces of information:</p>
+<ul>
+<li>The type of underlying operation (integer, control-flow, load/store)</li>
+<li>A particular integer operation (if one exists)</li>
+<li>A particular control-flow operation (if one exists)</li>
+<li>A particular load/store operation (if one exists)</li>
+<li>The types of operands (register, immediate, zero, program counter)</li>
+<li>The architectural destination and source registers</li>
+<li>Whether or not the instruction produces a register result</li>
+<li>Immediate data and control bits (if any exists)</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="branch-prediction"><a class="header" href="#branch-prediction">Branch Prediction</a></h1>
+<h2 id="branch-target-prediction"><a class="header" href="#branch-target-prediction">Branch Target Prediction</a></h2>
+<p>A <strong>branch target buffer</strong> (BTB) is keyed by the program counter value,
+and caches the previously-resolved target/s of a branch. The BTB is used
+to predict <em>the target of a particular branch instruction</em>. </p>
+<h2 id="branch-direction-prediction"><a class="header" href="#branch-direction-prediction">Branch Direction Prediction</a></h2>
+<p>A <strong>branch history buffer</strong> (BHB) is keyed by the program counter value,
+and records a history of previously-observed branch directions. The BHB
+is used to predict <em>the direction of a branch instruction</em>. </p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="zno-midcore"><a class="header" href="#zno-midcore">ZNO Midcore</a></h1>
+<p><a href="mid/./rename.html">Register Renaming</a> rewrites macro-ops and their operands 
+with the goal of revealing true data dependences between instructions. </p>
+<p><a href="mid/./dispatch.html">Instruction Dispatch</a> is responsible for releasing macro-ops
+to the out-of-order backend of the machine, and for managing the state
+used to maintain/recover the original program order. </p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="register-renaming"><a class="header" href="#register-renaming">Register Renaming</a></h1>
+<div id="admonition-abstract-nonsense" class="admonition info">
+<div class="admonition-title">
+<p>Abstract Nonsense</p>
+<p><a class="admonition-anchor-link" href="mid/rename.html#admonition-abstract-nonsense"></a></p>
+</div>
+<div>
+<p>Without aliasing between architectural storage locations, a set of 
+instructions can be easily rearranged into a <strong>dataflow graph</strong>: think of 
+instructions as nodes in the graph, and their <strong>read-after-write</strong> (RAW) 
+dependences as edges. This makes it obvious which instructions can be 
+completed in parallel with one another, and which instructions must wait
+for others before being executed. Out-of-order instruction issue depends on
+this property. </p>
+<p>If you're familiar with the way that modern compilers are implemented, you 
+might know that programs are often represented in <strong>single-static assignment</strong> 
+(SSA) form. The rationale behind register renaming is very similar, although
+we don't exactly have an <em>infinite</em> amount of registers.</p>
+</div>
+</div>
+<p>The register map and freelist are both used to rename architectural operands 
+into physical operands. Renaming is mainly used to prepare instructions for 
+out-of-order scheduling and execution in the backend. </p>
+<p>In general, renaming involves the following steps:</p>
+<ol>
+<li>Determine which operands resolve to known values (ie. zero)</li>
+<li>Determine which instructions are non-scheduled</li>
+<li>Determine which instructions allocate a new physical register</li>
+<li>Resolve &quot;local&quot; physical dependences (solely between instructions within 
+the window) by forwarding newly-allocated registers</li>
+<li>Resolve &quot;global&quot; physical dependences (between instructions in the window
+and older instructions in the pipeline) by reading from the register map</li>
+<li>Write back to the freelist and the register map</li>
+</ol>
+<p>Some macro-ops can be completed early during this stage by simply writing to 
+the register map. These <strong>non-scheduled instructions</strong> need to be detected 
+before we can determine what should happen with the rest of the instructions in 
+the window. </p>
+<h2 id="detecting-non-scheduled-instructions"><a class="header" href="#detecting-non-scheduled-instructions">Detecting Non-Scheduled Instructions</a></h2>
+<p>Integer operations in the decode window may complete during rename if their 
+operands satisfy some conditions. For now, these cases are:</p>
+<ul>
+<li>Register-to-register moves</li>
+<li>Immediate-to-register moves</li>
+<li>Zero-to-register moves</li>
+<li>No-ops </li>
+</ul>
+<p>Most of these occur for integer operations where zero is the identity, and
+our ability to recognize these depends on recognizing which operands can be
+resolved as zero. There are two places where this occurs:</p>
+<ul>
+<li>During decode, some operands are explicitly set to zero (like for <code>LUI</code>)</li>
+<li>During decode, comparators determine whether or not an immediate is zero</li>
+<li>By checking the register map zero bits during rename, we can determine if an 
+architectural register is currently mapped to zero</li>
+</ul>
+<div id="admonition-abstract-nonsense-1" class="admonition info">
+<div class="admonition-title">
+<p>Abstract Nonsense</p>
+<p><a class="admonition-anchor-link" href="mid/rename.html#admonition-abstract-nonsense-1"></a></p>
+</div>
+<div>
+<p>This is kind of like a very-limited form of <strong>constant propagation</strong>, but 
+only for values that are known to be zero. As far as I can tell, the cost of 
+this is &quot;putting comparators on the register map write ports.&quot;</p>
+</div>
+</div>
+<p>Given this information, the following integer operations can be squashed into 
+a move operation:</p>
+<ul>
+<li>For integer operations where zero is the identity, and when either operand 
+is zero, move the non-zero operand</li>
+<li>For subtraction, when the second operand is zero, move the first operand</li>
+<li>For subtraction and logical XOR, when both operands are the same, move zero </li>
+<li>For logical AND, when either operand is zero, move zero</li>
+</ul>
+<p>On top of this, integer operations where <em>both</em> operands are zero must be 
+equivalent to a no-op. </p>
+<h2 id="register-allocation"><a class="header" href="#register-allocation">Register Allocation</a></h2>
+<p>After scanning for non-scheduled instructions, we can determine whether or
+not each instruction in the decode window should allocate a physical register. 
+Non-scheduled instructions do not allocate.</p>
+<h2 id="resolving-dependences"><a class="header" href="#resolving-dependences">Resolving Dependences</a></h2>
+<p>In general, the register map read ports are used to convert a source register
+into the appropriate physical register. These are cases for &quot;global&quot; 
+dependences: registers that have been bound to a physical register on
+a previous cycle. </p>
+<p>However, for those instructions whose source registers are the destination 
+for some previous instruction in the window, the register map cannot be used 
+to resolve a physical register, since the bindings have not occured yet. </p>
+<p>Instead, the appropriate register name must be forwarded from the most-recent 
+producer in the decode window:</p>
+<ul>
+<li>When the producer is a scheduled instruction (with allocates), the 
+newly-allocated physical destination is used to resolve the name</li>
+<li><strong>TODO</strong></li>
+</ul>
+<div id="admonition-note" class="admonition note">
+<div class="admonition-title">
+<p>Note</p>
+<p><a class="admonition-anchor-link" href="mid/rename.html#admonition-note"></a></p>
+</div>
+<div>
+<p>Since non-scheduled instructions do not have a physical destination, what
+are we supposed to do when some source relies on a previous non-scheduled
+instruction? </p>
+<ul>
+<li>We could add read ports for each architectural destination?</li>
+<li>We could add ports that copy from one binding to another?</li>
+</ul>
+</div>
+</div>
+<h2 id="preparing-state"><a class="header" href="#preparing-state">Preparing State</a></h2>
+<p>This whole process results in writes to the register map and freelist. 
+There are two possible interactions with the register map write ports: </p>
+<ol>
+<li>For scheduled instructions that must allocate, we bind <code>rd</code> to the 
+newly-allocated physical destination register</li>
+<li>For non-scheduled instructions, we bind <code>rd</code> to the appropriate 
+physical source register </li>
+</ol>
+<h2 id="freelist"><a class="header" href="#freelist">Freelist</a></h2>
+<p>A <strong>freelist</strong> stores the set of physical registers that are available for
+allocation. 
+There is one read port for each entry in the decode window.
+The index of a free physical register is always being driven over the read
+port (if a register is available), along with a <code>valid</code> bit.
+When the <code>alloc</code> bit on a read port is held high, the corresponding physical
+register is marked as in-use starting on the next clock cycle. </p>
+<h2 id="register-map"><a class="header" href="#register-map">Register Map</a></h2>
+<p>A <strong>register map</strong> associates a physical register to each architectural 
+register (excluding the zero register <code>x0</code>). There are two read ports and 
+one write port for each entry in the decode window. </p>
+<p>The register map also tracks which architectural registers are bound to the 
+physical register 0. Each write port has a comparator used to determine 
+how the zero bit should be updated along with the binding. 
+These status bits are always driven as output.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="instruction-dispatch"><a class="header" href="#instruction-dispatch">Instruction Dispatch</a></h1>
+<div id="admonition-note" class="admonition note">
+<div class="admonition-title">
+<p>Note</p>
+<p><a class="admonition-anchor-link" href="mid/dispatch.html#admonition-note"></a></p>
+</div>
+<div>
+<p>With the exception of loads and stores, all other RV32I instructions map onto 
+a single scheduler entry. The phrase &quot;micro-op&quot; and &quot;scheduler entry&quot; are 
+effectively synonymous in this context.</p>
+</div>
+</div>
+<p><strong>Instruction dispatch</strong> is the process of submitting a block of macro-ops for 
+execution in the backend of the machine. </p>
+<p>Dispatch is roughly broken into the following pieces:</p>
+<ol>
+<li>Allocate/write a retire queue entry for the dispatched block</li>
+<li>Ensure that non-scheduled macro-ops are marked as completed</li>
+<li>Decompose each macro-op into one or more micro-ops </li>
+<li>Allocate/write a scheduler entry for each micro-op</li>
+</ol>
+<p>Dispatch must stall for the availability of a retire queue entry, and for the
+availability of scheduler storage. </p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="zno-backend"><a class="header" href="#zno-backend">ZNO Backend</a></h1>
+<p><a href="back/./sched.html">Instruction Scheduling</a> holds micro-ops until their data 
+dependences are satisfied, and then releases them to the appropriate 
+execution units. </p>
+<p>The <a href="back/./integer.html">Integer Pipeline</a> is responsible for executing integer
+operations and branch operations. </p>
+<p>The <a href="back/./integer.html">Load/Store Pipeline</a> is responsible for address generation,
+tracking the state of pending load/store operations, and interacting with 
+data memory.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="instruction-scheduling"><a class="header" href="#instruction-scheduling">Instruction Scheduling</a></h1>
+<p>After register renaming, the storage locations of each source/destination 
+operand belonging to a macro-op have been completely disambiguated.
+Instead of the architectural registers, each operand has a single unambigous 
+storage location:</p>
+<ul>
+<li>The program counter (identified by/computed with the parent fetch block)</li>
+<li>An immediate value (identified by each individual macro-op)</li>
+<li>A physical register (identified by a physical register number)</li>
+</ul>
+<p>Instead of the original program order, this is a <strong>data-flow graph</strong> 
+representation of the program, where:</p>
+<ul>
+<li>Nodes in the graph are <em>operations</em></li>
+<li>Edges in the graph are <em>names of values</em> subject to operations</li>
+<li>Edges flowing into a node are the <em>dependent values</em> required to perform 
+the operation</li>
+<li>Edges flowing out of a node are the <em>resulting values</em> produced by an 
+operation</li>
+</ul>
+<p>By tracking the <em>readiness</em> of values, a <strong>scheduler</strong> evaluates and 
+maintains the state of this graph and ultimately determines when operations 
+can be released for execution. This process is called <strong>instruction issue</strong>. </p>
+<h2 id="value-readiness"><a class="header" href="#value-readiness">Value Readiness</a></h2>
+<p>Some kinds of dependences are <em>always</em> ready-for-use because the underlying 
+value is already available, and can always be computed independently of 
+other operations:</p>
+<ul>
+<li>
+<p>Operations do not need to wait for the value of the program counter because
+(a) the base address of the parent decode block is stored in the scheduler,
+and (b) the actual program counter can be trivially computed by adding this 
+to the offset of the parent macro-op</p>
+</li>
+<li>
+<p>Operations do not need to wait for immediate values because (a) the 
+immediate data/control bits are stored alongside each micro-op waiting in 
+the scheduler and (b) the full immediate value can be trivially computed
+from this</p>
+</li>
+</ul>
+<p>Both of these computations can [concievably?] occur (a) immediately when an 
+operation is ready for issue, or (b) in-parallel with physical register file 
+accesses. </p>
+<p>Otherwise, dependences on physical registers always indicate that an operation
+depends on the result value of <em>some other</em> operation which may or may not 
+be ready.</p>
+<h2 id="dynamic-scheduling"><a class="header" href="#dynamic-scheduling">&quot;Dynamic&quot; Scheduling</a></h2>
+<p>Many instructions will have dependences that must be resolved before they
+can be issued. A <strong>wake-up queue</strong> is populated with instructions whose
+dependences are not satisfied upon entering the scheduler during dispatch.</p>
+<ol>
+<li>The name (destination physical register) of each result value produced in
+the backend is broadcast to all entries waiting in the queue.</li>
+<li>Each entry compares its source register names to all wake-ups being broadcast</li>
+<li>A match indicates that the data dependences for an entry have been resolved</li>
+</ol>
+<h2 id="static-scheduling"><a class="header" href="#static-scheduling">&quot;Static&quot; Scheduling</a></h2>
+<p>A <strong>ready queue</strong> populated with instructions whose dependences are already 
+known to be satisfied when entering the scheduler during dispatch. 
+In these cases, instructions to not need to be subject to more-complicated 
+dynamic scheduling, and can instead be released from a simple FIFO when the 
+appropriate execution resources are available. </p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="integer-pipeline"><a class="header" href="#integer-pipeline">Integer Pipeline</a></h1>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="loadstore-pipeline"><a class="header" href="#loadstore-pipeline">Load/Store Pipeline</a></h1>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+    </div>
+    </body>
+</html>
