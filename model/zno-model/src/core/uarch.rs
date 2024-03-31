@@ -147,7 +147,7 @@ pub enum CfmEntryKind {
     Invalid,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum DecodeBlockExit {
     /// This block has no control-flow instructions
     Sequential,

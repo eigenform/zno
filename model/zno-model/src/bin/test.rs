@@ -90,7 +90,8 @@ fn main() {
         println!("============== cycle {} ================", cyc);
 
         // ====================================================================
-        // Control-flow events
+        // Control-flow events.
+        // This controls the program counter sent to the fetch unit. 
 
         cfe_s0.drive(None);
 
@@ -102,6 +103,9 @@ fn main() {
             ftq.enq(cfe.npc);
 
 
+            // The "control-flow map" has asynchronous read ports. 
+            // We use this to determine if we can *predict* a control-flow 
+            // event. 
             if let Some(cfm_entry) = cfm.sample_rp(cfe.npc) {
                 println!("[CFM] CFM hit unimplemented");
             } 
@@ -143,6 +147,8 @@ fn main() {
             let words = fblk.as_words();
             let mut pdblk = fblk.predecode();
             println!("[PDU] Predecoded {:08x}", pdblk.addr);
+
+            println!("[PDU] Found {:08x?}", pdblk.get_exit());
             pdq.enq(pdblk);
             fbq.set_deq();
         } 
@@ -198,6 +204,7 @@ fn main() {
                 if mop.is_nonsched() {
                     continue;
                 }
+
 
 
                 println!("[DIS] {}: {:?} {}", idx, mop.kind, mop);

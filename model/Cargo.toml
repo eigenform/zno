@@ -1,4 +1,10 @@
 [workspace]
 members = [
 	"zno-model",
+	"sim",
+
+	"pipelined-simple",
+	"zno",
+
 ]
+resolver = "2"

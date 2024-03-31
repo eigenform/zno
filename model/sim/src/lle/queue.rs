@@ -3,7 +3,8 @@ use std::collections::*;
 
 /// Simple queue implementation. 
 ///
-/// FIXME: This is a high-level version (and there's no bound on the size!).
+/// FIXME: This is a high-level version; convert to [Clocked]
+/// FIXME: There's no bound on the size of this queue
 pub struct Queue<T> {
     pub next: Option<T>,
     pub deq_ok: bool,
@@ -49,6 +50,7 @@ impl <T> Queue<T> {
     }
 }
 
+/// FIXME: This is a high-level version; convert to [Clocked]
 pub struct CircularQueue<T: Copy, const SZ: usize> {
     pub next: Option<T>,
     pub enq_ptr: usize,
