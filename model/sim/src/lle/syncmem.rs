@@ -119,7 +119,8 @@ impl <D: Copy + Default, const SZ: usize> SyncMem<D, SZ> {
 impl <D: Copy + Default, const SZ: usize> Clocked for SyncMem<D, SZ> {
     fn update(&mut self) {
         for rp in self.rp.iter_mut() {
-            rp.sample_en
+        }
+        for wp in self.wp.iter_mut() {
         }
     }
 }

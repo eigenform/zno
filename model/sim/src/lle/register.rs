@@ -6,6 +6,16 @@ use std::rc::*;
 use crate::lle::*;
 
 /// A register. 
+///
+/// NOTE: I guess this is really a register with an 'enable' signal? 
+/// If the user does *not* call [Reg::drive] on a particular cycle, then 
+/// no change will occur on the next cycle. You do not *need* to drive 
+/// the input each cycle in this case, but is that desirable? 
+///
+/// NOTE: I guess you can get the behavior of a register with a 'valid' signal
+/// by wrapping the interior type in [Option]. Might be worth turning that 
+/// into a separate type (ie. a `ValidReg`).
+///
 #[derive(Clone, Copy)]
 pub struct Reg<T: Copy + Default> {
     /// The [instantaneous] value of this register.
@@ -51,6 +61,7 @@ impl <T: Copy + Default> Clocked for Reg<T> {
 mod test {
     use super::*;
 
+    /// Trivial example use of [ClockedState]
     pub struct MyModule {
         state: ClockedState,
         reg: StateRef<Reg<u32>>,
@@ -60,11 +71,10 @@ mod test {
             let reg = Rc::new(RefCell::new(Reg::new(0)));
             let mut state = ClockedState::new();
             state.track(&reg);
-            let mut res = Self { 
+            Self { 
                 state,
                 reg,
-            };
-            res
+            }
         }
     }
     impl Clocked for MyModule {

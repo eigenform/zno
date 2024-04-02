@@ -1,16 +1,24 @@
 //! Low-level emulation. 
 //!
 //! These are abstractions for representing/simulating clocked circuits. 
-//! The idea is to *approximate* the semantics of a behavioral RTL so that 
-//! it's a little bit easier to write Rust programs that look and behave 
-//! *somewhat* like a simulated behavioral RTL. We're doing it this way in 
-//! an attempt to avoid writing some kind of DSL inside Rust macros. 
+//! The idea is to at least *approximate* the semantics of a behavioral RTL 
+//! so that it's a little bit easier to write Rust programs that look and 
+//! behave *somewhat* like a simulated behavioral RTL. 
 //!
-//! [ClockedState] is an example of a container used to synchronize updates to 
-//! multiple simulated clocked components.
+//! We're doing it this way in an attempt to avoid writing some kind of DSL 
+//! with Rust macros and then implementing some kind of compiler. 
+//! Right now, there isn't much distinction between "describing a design"
+//! and "simulating a design". 
+//!
+//!
+//! Usage Notes
+//! ===========
 //!
 //! All clocked components must implement [Clocked], which specifies how the 
 //! internal state of an object should change at clock edges.
+//!
+//! [ClockedState] is an example of a container used to synchronize updates to 
+//! multiple simulated clocked components.
 //!
 
 pub mod wire;
@@ -34,6 +42,10 @@ pub trait Clocked {
 pub type StateRef<T> = Rc<RefCell<T>>;
 
 /// A container for components sharing the same clock signal. 
+///
+/// NOTE: Are there situations where the *order* of updates should matter? 
+/// I guess we're leaving that to the user.
+///
 pub struct ClockedState {
     cycle: usize,
     /// The set of clocked components being tracked.
@@ -48,8 +60,7 @@ impl ClockedState {
         }
     }
 
-    /// Move an object implementing [Clocked] into the container an return 
-    /// the resulting [StateRef].
+    /// Clone a [Clocked] object, tracking it in this container. 
     pub fn track<T>(&mut self, obj: &StateRef<T>)
         where T: Clocked + 'static
     {

@@ -5,7 +5,7 @@ use std::rc::*;
 use crate::lle::*;
 use crate::lle::register::*;
 
-/// Memory element (asynchronous read, synchronous write)
+/// An array of registers (asynchronous read, synchronous write)
 pub struct Mem<D: Copy + Default, const SZ: usize> {
     data: [ Reg<D>; SZ ],
 }

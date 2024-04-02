@@ -9,9 +9,13 @@
 
 use sim::hle::mem::*;
 use sim::hle::riscv::*;
+
 use sim::lle::register::*;
 use sim::lle::mem::*;
 use sim::lle::*;
+
+pub mod rename;
+use rename::*;
 
 
 
@@ -66,16 +70,23 @@ impl ProgramCounter {
     pub fn fblk_start_idx(&self) -> usize { 
         (self.0 & 0x1f) >> 2
     }
+    pub fn inc_next_fblk(&mut self) {
+        self.0 += 0x20;
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 enum ControlFlowEvent {
     ResetVector(ProgramCounter),
+    Sequential(ProgramCounter),
+    Static(BranchKind, ProgramCounter),
 }
 impl ControlFlowEvent {
     fn get_pc(&self) -> ProgramCounter { 
         match self {
             Self::ResetVector(pc) => *pc,
+            Self::Sequential(pc) => *pc,
+            Self::Static(_, pc) => *pc,
         }
     }
 }
@@ -94,19 +105,34 @@ impl FetchBlock {
         Self { pc, data }
     }
 
-    pub fn hle_decode(&self) -> [Instr; 8] {
-        let mut res = [Instr::Illegal(0); 8];
-        for idx in 0..8 {
-            let inst = Rv32::disas(self.data[idx]);
-            res[idx] = inst;
+    pub fn data(&self) -> [Option<u32>; 8] {
+        let mut res = [ None; 8 ];
+        for idx in self.pc.fblk_start_idx()..8 {
+            res[idx] = Some(self.data[idx]);
         }
         res
     }
-    pub fn imm_decode(&self) -> [Rv32Imm; 8] {
-        let mut res = [ Rv32Imm::default(); 8 ];
+
+    pub fn hle_decode(&self) -> [Option<Instr>; 8] {
+        let mut res = [ None ; 8];
+        let data = self.data();
         for idx in 0..8 {
-            let imm = Rv32::decode_imm(self.data[idx]);
-            res[idx] = imm;
+            if let Some(opcd) = data[idx] {
+                let inst = Rv32::disas(opcd);
+                res[idx] = Some(inst);
+            }
+        }
+        res
+    }
+
+    pub fn imm_decode(&self) -> [Option<Rv32Imm>; 8] {
+        let mut res = [ None; 8 ];
+        let data = self.data();
+        for idx in 0..8 {
+            if let Some(opcd) = data[idx] {
+                let imm = Rv32::decode_imm(opcd);
+                res[idx] = Some(imm);
+            }
         }
         res
     }
@@ -114,27 +140,89 @@ impl FetchBlock {
 
 #[derive(Clone, Copy)]
 struct PredecodeBlock {
-    pc: ProgramCounter,
-    imm: [Rv32Imm; 8],
-    brn: [BranchKind; 8],
+    pub pc: ProgramCounter,
+    pub imm: [Option<Rv32Imm>; 8],
+    pub brn: [Option<BranchKind>; 8],
+    pub data: [u32; 8],
+    pub last_idx: usize,
 }
 impl PredecodeBlock {
-    pub fn from_fetch_block(fblk: &FetchBlock) -> Self {
-        let mut imm = [ Rv32Imm::default(); 8 ];
-        let mut brn = [ BranchKind::None; 8 ];
+    pub fn data(&self) -> [Option<u32>; 8] {
+        let mut res = [ None; 8 ];
+        for idx in self.pc.fblk_start_idx()..8 {
+            res[idx] = Some(self.data[idx]);
+        }
+        res
+    }
+
+    pub fn valid_range(&self) -> std::ops::RangeInclusive<usize> {
+        self.pc.fblk_start_idx()..=self.last_idx
+    }
+
+    pub fn hle_decode(&self) -> [Option<Instr>; 8] {
+        let mut res = [ None ; 8];
+        let data = self.data();
+
+        for idx in self.valid_range() {
+            if let Some(opcd) = data[idx] {
+                let inst = Rv32::disas(opcd);
+                res[idx] = Some(inst);
+            }
+        }
+        res
+    }
+
+    pub fn imm_decode(&self) -> [Option<Rv32Imm>; 8] {
+        let mut res = [ None; 8 ];
+        let data = self.data();
         for idx in 0..8 {
+            if let Some(opcd) = data[idx] {
+                let imm = Rv32::decode_imm(opcd);
+                res[idx] = Some(imm);
+            }
+        }
+        res
+    }
+
+    pub fn from_fetch_block(fblk: &FetchBlock) -> Self {
+        let mut imm = [None; 8];
+        let mut brn = [None; 8];
+
+        let start_idx = fblk.pc.fblk_start_idx();
+        for idx in start_idx..8 {
             let i = Rv32::decode_imm(fblk.data[idx]);
             let b = Rv32::disas(fblk.data[idx]).branch_kind();
-            imm[idx] = i;
-            brn[idx] = b;
+            imm[idx] = Some(i);
+            brn[idx] = Some(b);
         }
 
-        Self { pc: fblk.pc, imm, brn }
+        Self { 
+            pc: fblk.pc, 
+            imm, 
+            brn, 
+            data: fblk.data, 
+            last_idx: 7
+        }
     }
+
     pub fn first_branch_idx(&self) -> Option<usize> {
         self.brn.iter().enumerate()
-            .find(|(idx,&bk)| bk != BranchKind::None)
+            .find(|(idx,bk)| {
+                if let Some(kind) = bk {
+                    *kind != BranchKind::None
+                } else {
+                    false
+                }
+            })
             .map(|(idx, &bk)| idx)
+    }
+
+    pub fn first_branch(&self) -> Option<(usize, Rv32Imm, BranchKind)> {
+        if let Some(idx) = self.first_branch_idx() {
+            Some((idx, self.imm[idx].unwrap(), self.brn[idx].unwrap()))
+        } else {
+            None
+        }
     }
 
 }
@@ -143,28 +231,30 @@ impl PredecodeBlock {
 #[derive(Clone, Copy)]
 struct DecodeBlock {
     pc: ProgramCounter,
-    data: [Instr; 8],
+    data: [Option<Instr>; 8],
 }
 impl DecodeBlock {
-    pub fn from_fetch_block(fblk: &FetchBlock) -> Self {
-        Self { pc: fblk.pc, data: fblk.hle_decode() }
+    //pub fn from_fetch_block(fblk: &FetchBlock) -> Self {
+    //    Self { pc: fblk.pc, data: fblk.hle_decode() }
+    //}
+    pub fn from_predecode_block(pdblk: &PredecodeBlock) -> Self {
+        Self { pc: pdblk.pc, data: pdblk.hle_decode() }
     }
-
-
 
     pub fn print(&self) {
         for idx in 0..8 {
             let pc = self.pc.fetch_addr().wrapping_add(idx << 2);
-            if idx < self.pc.fblk_start_idx() {
-                println!("{:08x}: X {}", pc, self.data[idx]);
-            } else {
-                println!("{:08x}:   {}", pc, self.data[idx]);
+            if let Some(inst) = self.data[idx] {
+                println!("{:08x}: {}", pc, inst);
+            } else { 
+                println!("{:08x}: <none>", pc);
             }
         }
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+
+#[derive(Clone, Copy, Debug, Default)]
 pub struct PhysReg(pub usize);
 
 #[derive(Clone, Copy, Debug)]
@@ -197,148 +287,12 @@ impl Uop {
     }
 }
 
-struct RenameWindowInfo {
-    rd_arr: [Option<ArchReg>; 8],
-    rs1_arr: [Option<ArchReg>; 8],
-    rs2_arr: [Option<ArchReg>; 8],
 
-    rs1_dep: [Option<usize>; 8],
-    rs2_dep: [Option<usize>; 8],
-
-    pd_arr: [Option<PhysReg>; 8],
-    ps1_arr: [Option<PhysReg>; 8],
-    ps2_arr: [Option<PhysReg>; 8],
-}
-impl RenameWindowInfo {
-    pub fn new() -> Self { 
-        Self { 
-            rd_arr: [ None; 8 ],
-            rs1_arr: [ None; 8 ],
-            rs2_arr: [ None; 8 ],
-            rs1_dep: [ None; 8 ],
-            rs2_dep: [ None; 8 ],
-
-            pd_arr: [None; 8],
-            ps1_arr: [None; 8],
-            ps2_arr: [None; 8],
-        }
-    }
-}
-
-struct RegisterRename; 
-impl RegisterRename {
-    pub fn get_window(dblk: &DecodeBlock) -> RenameWindowInfo {
-        let mut window = RenameWindowInfo::new();
-        for (idx, instr) in dblk.data.iter().enumerate() {
-            window.rd_arr[idx] = instr.rd();
-            window.rs1_arr[idx] = instr.rs1();
-            window.rs2_arr[idx] = instr.rs2();
-
-            if let Some(rs1) = instr.rs1() {
-                let dep_window = &window.rd_arr[0..idx];
-                for j in (0..idx).rev() {
-                    if let Some(rd) = dep_window[j] {
-                        if rd == rs1 {
-                            window.rs1_dep[idx] = Some(j);
-                            break;
-                        }
-                    }
-                }
-            }
-            if let Some(rs2) = instr.rs1() {
-                let dep_window = &window.rd_arr[0..idx];
-                for j in (0..idx).rev() {
-                    if let Some(rd) = dep_window[j] {
-                        if rd == rs2 {
-                            window.rs2_dep[idx] = Some(j);
-                            break;
-                        }
-                    }
-                }
-            }
-
-        }
-        window
-    }
-}
-
-#[derive(Clone, Copy)]
-struct RenameBlock {
-    pc: ProgramCounter,
-    data: [Uop; 8],
-}
-impl RenameBlock {
-    pub fn from_decode_block(dblk: &DecodeBlock) -> Self {
-        let mut data = [ Uop::nop(); 8];
-
-        let mut rd_arr  = [ None; 8 ];
-        let mut rs1_arr = [ None; 8 ];
-        let mut rs1_dep = [ None; 8 ];
-        let mut rs2_arr = [ None; 8 ];
-        let mut rs2_dep = [ None; 8 ];
-
-        for (idx, instr) in dblk.data.iter().enumerate() {
-            rd_arr[idx] = instr.rd();
-            rs1_arr[idx] = instr.rs1();
-            rs2_arr[idx] = instr.rs2();
-
-            if let Some(rs1) = instr.rs1() {
-                let dep_window = &rd_arr[0..idx];
-                for j in (0..idx).rev() {
-                    if let Some(rd) = dep_window[j] {
-                        if rd == rs1 {
-                            rs1_dep[idx] = Some(j);
-                            break;
-                        }
-                    }
-                }
-            }
-            if let Some(rs2) = instr.rs1() {
-                let dep_window = &rd_arr[0..idx];
-                for j in (0..idx).rev() {
-                    if let Some(rd) = dep_window[j] {
-                        if rd == rs2 {
-                            rs2_dep[idx] = Some(j);
-                            break;
-                        }
-                    }
-                }
-            }
-
-
-
-            data[idx].instr = *instr;
-        }
-
-        println!("{:?}", rd_arr.iter().flatten());
-        println!("{:?}", rs1_arr);
-        println!("{:?}", rs2_arr);
-        println!("{:?}", rs1_dep);
-        println!("{:?}", rs2_dep);
-
-
-
-
-        Self { pc: dblk.pc, data }
-    }
-
-
-
-    pub fn print(&self) {
-        for idx in 0..8 {
-            let pc = self.pc.fetch_addr().wrapping_add(idx << 2);
-            if idx < self.pc.fblk_start_idx() {
-                println!("{:08x}: X {:?}", pc, self.data[idx]);
-            } else {
-                println!("{:08x}:   {:?}", pc, self.data[idx]);
-            }
-        }
-    }
-}
-
-
-
-
+const MAP_INIT: &[usize; 32] = &[
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+];
+type RegisterMap = Mem<usize, 32>;
 
 fn main() {
     const RAM_SIZE: usize = 0x0200_0000;
@@ -355,25 +309,39 @@ fn main() {
     let mut r_fpc = Reg::<Option<ProgramCounter>>::new(None);
     // Fetch block
     let mut r_fblk = Reg::<Option<FetchBlock>>::new(None);
+    // Predecode block
+    let mut r_pdblk = Reg::<Option<PredecodeBlock>>::new(None);
     // Decode block
     let mut r_dblk = Reg::<Option<DecodeBlock>>::new(None);
+    // Rename block
     let mut r_rblk = Reg::<Option<RenameBlock>>::new(None);
+    // Register map
+    let mut r_map = Mem::<usize, 32>::new_init_array(&MAP_INIT);
+    // Freelist
+    let mut r_frl = Reg::<Freelist<256>>::new(Freelist::default());
 
-    let mut r_rmap = RegisterFile::<usize, 32>::new_init(
-        [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-          16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 ]
-    );
 
-
-    for cyc in 0..16 {
+    for cyc in 0..24 {
         println!("================ cycle {} ==================", cyc);
+
+        // If predecode generates a CFE this cycle, we need a wire to 
+        // tell the decode stage to avoid 
+        let mut redirect_from_predecode = false;
+
 
         // Control-flow control
         if let Some(cfe) = r_cfe.sample() {
             let pc = cfe.get_pc();
-            println!("Control flow event @ {:08x}", pc.value());
+            println!("Control flow event @ {:08x}, {:08x?}", pc.value(), cfe);
             r_fpc.drive(Some(pc));
-            r_cfe.drive(None);
+
+            // Generate the next event. 
+            // NOTE: This is only relevant if later stages do not drive 
+            // 'r_cfe' (in which case, those values will take precedence). 
+            let mut npc = ProgramCounter::new(pc.fetch_addr() + 0x20);
+            r_cfe.drive(Some(ControlFlowEvent::Sequential(npc)));
+        } else {
+            println!("No valid CFE for this cycle");
         }
 
         // Fetch Unit
@@ -382,40 +350,106 @@ fn main() {
             let mut tmp = [0u8; 32];
             ram.read_bytes(fpc.fetch_addr(), &mut tmp);
             let mut fblk = FetchBlock::from_bytes(fpc, tmp);
-            r_fpc.drive(None);
             r_fblk.drive(Some(fblk));
+        } else {
+            println!("No valid fetch pc to fetch this cycle");
+            r_fblk.drive(None);
+        }
+
+        // Predecode Unit
+        if let Some(fblk) = r_fblk.sample() {
+            println!("Predecoding block @ {:08x}", &fblk.pc.value());
+            let mut pdblk = PredecodeBlock::from_fetch_block(&fblk);
+
+            // The target of relative call/jmp can be computed here.
+            // If we act on this control-flow event:
+            //   - Any fetch block generated this cycle must be invalidated
+            //   - Any fetch pc generated this cycle must be invalidated
+            //   - The decode stage this cycle must ignore the fetch block
+            //     generated on the previous cycle
+            if let Some((idx, imm, brn)) = pdblk.first_branch() { 
+                let pc = pdblk.pc.value() + (idx * 4);
+
+                let static_tgt = match brn {
+                    BranchKind::CallRelative => {
+                        let imm32 = imm.expand().unwrap();
+                        Some(pc as u32 + imm32)
+                    },
+                    BranchKind::JmpRelative => {
+                        let imm32 = imm.expand().unwrap();
+                        Some(pc as u32 + imm32)
+                    },
+                    _ => None,
+                };
+                if let Some(tgt) = static_tgt { 
+                    println!("Discovered branch {:08x}: {:?}, idx={}, tgt={:08x?}", pc, brn, idx, tgt);
+                    let npc = ProgramCounter::new(tgt as usize);
+                    r_cfe.drive(Some(ControlFlowEvent::Static(brn, npc)));
+
+                    // Flush incorrect spec. from the pipeline
+                    redirect_from_predecode = true;
+                    r_fblk.drive(None);
+                    r_fpc.drive(None);
+                }
+
+                // Do not decode speculatively past the branch
+                if brn != BranchKind::None {
+                    pdblk.last_idx = idx;
+                }
+
+            }
+
+            r_pdblk.drive(Some(pdblk));
+        } else {
+            println!("No valid fetch block to predecode this cycle");
+            r_pdblk.drive(None);
         }
 
         // Decode Unit
-        if let Some(fblk) = r_fblk.sample() {
-            println!("Decoding block @ {:08x}", &fblk.pc.value());
-            let mut pdblk = PredecodeBlock::from_fetch_block(&fblk);
-            let mut dblk = DecodeBlock::from_fetch_block(&fblk);
-            dblk.print();
+        if let Some(pdblk) = r_pdblk.sample() {
+            if redirect_from_predecode {
+                println!("Decoder ignoring block @ {:08x}", &pdblk.pc.value());
+            } 
+            else 
+            {
+                println!("Decoding block @ {:08x}", &pdblk.pc.value());
+                let mut dblk = DecodeBlock::from_predecode_block(&pdblk);
+                dblk.print();
 
-            r_fblk.drive(None);
-            r_dblk.drive(Some(dblk));
+                r_dblk.drive(Some(dblk));
+            }
+        } else {
+            println!("No valid predecode block to decode this cycle");
         }
+
 
         // Rename Unit
         if let Some(dblk) = r_dblk.sample() {
             println!("Renaming block @ {:08x}", &dblk.pc.value());
 
-            let mut info = RegisterRename::get_window(&dblk);
+            let mut frl = r_frl.sample();
+            let mut window = RenameWindowInfo::from_decode_block(&dblk);
+            window.resolve_dependencies(&r_map);
+            window.allocate(&mut frl, &mut r_map).unwrap();
+            window.forward_allocs();
 
-            //let mut rblk = RenameBlock::from_decode_block(&dblk);
-            //rblk.print();
 
+            window.print();
 
-            r_dblk.drive(None);
+            r_frl.drive(frl);
             //r_rblk.drive(Some(rblk));
+        } else {
+            println!("No valid edecode block to rename this cycle");
         }
 
 
         r_fpc.update();
         r_cfe.update();
         r_fblk.update();
+        r_pdblk.update();
         r_dblk.update();
+        r_frl.update();
+        r_map.update();
     }
 
 

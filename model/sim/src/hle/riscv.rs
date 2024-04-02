@@ -648,6 +648,12 @@ impl Rv32Imm {
     pub fn new(fmt: ImmFormat, data: ImmData) -> Self {
         Self { fmt, data }
     }
+    pub fn expand(&self) -> Option<u32> {
+        self.data.expand(self.fmt)
+    }
+    pub fn is_valid(&self) -> bool {
+        self.fmt != ImmFormat::None
+    }
 }
 impl Default for Rv32Imm {
     fn default() -> Self {
